@@ -1,0 +1,16 @@
+*.o
+*.d
+kern/compile/*
+*core
+CHANGES
+Makefile
+build/
+common/
+configure
+defs.mk
+design/
+man/
+mk/
+testscripts/
+userland/
+.
