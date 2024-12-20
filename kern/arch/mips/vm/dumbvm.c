@@ -90,27 +90,31 @@ static int isTableActive () {
   return active;
 }
 
-void
-vm_bootstrap(void)
-{
-  int i;
-  nRamFrames = ((int)ram_getsize())/PAGE_SIZE;  
-  /* alloc freeRamFrame and allocSize */  
-  freeRamFrames = kmalloc(sizeof(unsigned char)*nRamFrames);
-  if (freeRamFrames==NULL) return;  
-  allocSize     = kmalloc(sizeof(unsigned long)*nRamFrames);
-  if (allocSize==NULL) {    
-    /* reset to disable this vm management */
-    freeRamFrames = NULL; return;
-  }
-  for (i=0; i<nRamFrames; i++) {    
-    freeRamFrames[i] = (unsigned char)0;
-    allocSize[i]     = 0;  
-  }
-  spinlock_acquire(&freemem_lock);
-  allocTableActive = 1;
-  spinlock_release(&freemem_lock);
+void vm_bootstrap(void) {
+    int i;
+
+    nRamFrames = ram_getsize() / PAGE_SIZE;
+
+    freeRamFrames = kmalloc(sizeof(unsigned char) * nRamFrames);
+    if (!freeRamFrames) {
+        panic("vm_bootstrap: Failed to allocate freeRamFrames");
+    }
+
+    allocSize = kmalloc(sizeof(unsigned long) * nRamFrames);
+    if (!allocSize) {
+        panic("vm_bootstrap: Failed to allocate allocSize");
+    }
+
+    for (i = 0; i < nRamFrames; i++) {
+        freeRamFrames[i] = (unsigned char)0;
+        allocSize[i] = 0;
+    }
+
+    spinlock_acquire(&freemem_lock);
+    allocTableActive = 1;
+    spinlock_release(&freemem_lock);
 }
+
 
 /*
  * Check if we're in a context that can sleep. While most of the
@@ -130,6 +134,20 @@ dumbvm_can_sleep(void)
 		KASSERT(curthread->t_in_interrupt == 0);
 	}
 }
+
+void vm_print_stats(void) {
+    int free_count = 0;
+
+    for (int i = 0; i < nRamFrames; i++) {
+        if (freeRamFrames[i]) {
+            free_count++;
+        }
+    }
+
+    kprintf("Total Frames: %d, Free Frames: %d, Used Frames: %d\n", 
+            nRamFrames, free_count, nRamFrames - free_count);
+}
+
 
 static paddr_t 
 getfreeppages(unsigned long npages) {
@@ -219,16 +237,24 @@ alloc_kpages(unsigned npages)
 	return PADDR_TO_KVADDR(pa);
 }
 
-void 
-free_kpages(vaddr_t addr){
-  if (isTableActive()) {
-    paddr_t paddr = addr - MIPS_KSEG0;
-    long first = paddr/PAGE_SIZE;	
-    KASSERT(allocSize!=NULL);
-    KASSERT(nRamFrames>first);
-    freeppages(paddr, allocSize[first]);	
-  }
+void free_kpages(vaddr_t addr) {
+    if (isTableActive()) {
+        paddr_t paddr = addr - MIPS_KSEG0;
+        long frame = paddr / PAGE_SIZE;
+
+        KASSERT(allocSize != NULL);
+        KASSERT(nRamFrames > frame);
+
+        unsigned long size = allocSize[frame];
+        if (size == 0) {
+            kprintf("free_kpages: Attempt to free unallocated memory\n");
+            return;
+        }
+
+        freeppages(paddr, size);
+    }
 }
+
 
 void
 vm_tlbshootdown(const struct tlbshootdown *ts)
@@ -357,13 +383,22 @@ as_create(void)
 	return as;
 }
 
-void as_destroy(struct addrspace *as){
-  dumbvm_can_sleep();
-  freeppages(as->as_pbase1, as->as_npages1);
-  freeppages(as->as_pbase2, as->as_npages2);
-  freeppages(as->as_stackpbase, DUMBVM_STACKPAGES);
-  kfree(as);
+void as_destroy(struct addrspace *as) {
+    dumbvm_can_sleep();
+    if (as) {
+        if (as->as_pbase1) {
+            freeppages(as->as_pbase1, as->as_npages1);
+        }
+        if (as->as_pbase2) {
+            freeppages(as->as_pbase2, as->as_npages2);
+        }
+        if (as->as_stackpbase) {
+            freeppages(as->as_stackpbase, DUMBVM_STACKPAGES);
+        }
+        kfree(as);
+    }
 }
+
 
 void
 as_activate(void)
