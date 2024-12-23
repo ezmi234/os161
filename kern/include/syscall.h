@@ -59,9 +59,18 @@ __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
 
 int sys_reboot(int code);
 int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
-#if OPT_SHELL 
+
+// System calls
+#if OPT_SHELL
+
 int sys_write(int fd, userptr_t buf_ptr, size_t size);
 int sys_read(int fd, userptr_t buf_ptr, size_t size);
 void sys__exit(int status);
+int sys_dup2(int oldf, int newfd);
+int sys_chdir(const char *path);
+char *sys_getcwd(char buf[], size_t size);
+pid_t sys_getpid(void);
+
 #endif
+
 #endif /* _SYSCALL_H_ */

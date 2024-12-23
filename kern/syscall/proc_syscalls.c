@@ -10,6 +10,7 @@
 #include <clock.h>
 #include <copyinout.h>
 #include <syscall.h>
+#include <current.h>
 #include <lib.h>
 #include <proc.h>
 #include <thread.h>
@@ -30,3 +31,10 @@ sys__exit(int status)
   panic("thread_exit returned (should not happen)\n");
   (void) status; // TODO: status handling
 }
+
+#if OPT_SHELL
+pid_t sys_getpid() {
+  pid_t result = curproc->p_pid;
+  return result;
+}
+#endif
