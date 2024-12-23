@@ -28,6 +28,7 @@
  */
 
 #include <types.h>
+#include <../../../userland/lib/libc/unix/errno.c>
 #include <kern/errno.h>
 #include <kern/syscall.h>
 #include <lib.h>
@@ -99,11 +100,11 @@ syscall(struct trapframe *tf)
 
 	switch (callno) {
 	    case SYS_reboot:
-		err = sys_reboot(tf->tf_a0);
+			err = sys_reboot(tf->tf_a0);
 		break;
 
 	    case SYS___time:
-		err = sys___time((userptr_t)tf->tf_a0,
+			err = sys___time((userptr_t)tf->tf_a0,
 				 (userptr_t)tf->tf_a1);
 		break;
 
@@ -113,22 +114,40 @@ syscall(struct trapframe *tf)
 	        retval = sys_write((int)tf->tf_a0,
 				(userptr_t)tf->tf_a1,
 				(size_t)tf->tf_a2);
-		/* error: function not implemented */
-                if (retval<0) err = ENOSYS; 
-		else err = 0;
-                break;
+			/* error: function not implemented */
+            if (retval<0) err = ENOSYS; 
+			else err = 0;
+        break;
 	    case SYS_read:
 	        retval = sys_read((int)tf->tf_a0,
 				(userptr_t)tf->tf_a1,
 				(size_t)tf->tf_a2);
-		/* error: function not implemented */
-                if (retval<0) err = ENOSYS; 
-		else err = 0;
-                break;
+			/* error: function not implemented */
+            if (retval<0) err = ENOSYS; 
+			else err = 0;
+        break;
 	    case SYS__exit:
-	        /* TODO: just avoid crash */
  	        sys__exit((int)tf->tf_a0);
-                break;
+        break;
+		case SYS_dup2:
+			retval = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1);
+    		if (retval < 0) err = errno;
+    	break;
+		case SYS_chdir:
+			retval = sys_chdir((const char *)tf->tf_a0);
+			if (retval < 0) err = errno;
+		break;
+		case SYS___getcwd: {
+			char *result;
+			result = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1);
+			if (result == NULL) retval = -1;
+			if (retval < 0) err = errno;
+		break;
+		}
+		case SYS_getpid:
+			retval = sys_getpid();
+			err = 0;
+		break;
 #endif
 
 	    default:
