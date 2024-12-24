@@ -62,6 +62,9 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 #if OPT_SHELL 
 int sys_write(int fd, userptr_t buf_ptr, size_t size);
 int sys_read(int fd, userptr_t buf_ptr, size_t size);
+int sys_open(const char *pathname, int flags, mode_t mode);
+int close(int fd);
+off_t lseek(int fd, off_t offset, int whence);
 void sys__exit(int status);
 #endif
 #endif /* _SYSCALL_H_ */
