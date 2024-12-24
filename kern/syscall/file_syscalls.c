@@ -17,15 +17,8 @@
 #include <vnode.h>
 #include <syscall.h>
 #include <limits.h>
-#include <kern/errno.h>
-#include <kern/fcntl.h>
 #include <lib.h>
 #include <../../../userland/lib/libc/unix/errno.c>
-#include <uio.h>
-#include <proc.h>
-#include <vnode.h>
-#include <vfs.h>
-#include <openfile.h>
 
 #if OPT_SHELL
 
@@ -90,12 +83,6 @@ int sys_open(const char *pathname, int flags, mode_t mode)
   return EMFILE; // Too many open files
 }
 
-/* Close a file */
-#include <openfile.h>
-#include <kern/errno.h>
-#include <proc.h>
-#include <current.h>
-
 int sys_close(int fd)
 {
   struct openfile *file;
@@ -126,15 +113,6 @@ int sys_close(int fd)
   curproc->fileTable[fd] = NULL;
   return 0; // Success
 }
-
-/* Seek within a file */
-#include <openfile.h>
-#include <kern/seek.h>
-#include <kern/stat.h>
-#include <vnode.h>
-#include <proc.h>
-#include <current.h>
-#include <kern/errno.h>
 
 off_t sys_lseek(int fd, off_t offset, int whence)
 {
