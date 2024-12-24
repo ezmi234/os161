@@ -18,6 +18,8 @@
 #include <syscall.h>
 #include <limits.h>
 #include <lib.h>
+#include <kern/seek.h>
+#include <kern/stat.h>
 #include <../../../userland/lib/libc/unix/errno.c>
 
 #if OPT_SHELL
