@@ -222,13 +222,12 @@ sys_dup2(int oldfd, int newfd)
 {
   // preliminary checks
   if (oldfd < 0 || oldfd > OPEN_MAX || newfd < 0 || newfd > OPEN_MAX) {
-    errno = EBADF;
-    return -1;
+    return EBADF;
+    
   }
 
   if (curproc->fileTable[oldfd] == NULL) {
-    errno = EBADF;
-    return -1;
+    return EBADF;
   }
 
   // special case: oldfd = newfd
@@ -253,22 +252,19 @@ int
 sys_chdir(const char *path)
 {
   if (path == NULL) {
-    errno = EFAULT;
-    return -1;
+    return EFAULT;
   }
 
   char kbuf[PATH_MAX];
   struct vnode *new_dir;
   int result = copyinstr((const_userptr_t)path, kbuf, sizeof(kbuf), NULL);
   if (result) {
-    errno = result;
-    return -1;
+    return result;
   }
 
   result = vfs_open(kbuf, O_RDONLY, 0, &new_dir);
   if (result) {
-    errno = result;
-    return -1;
+    return result;
   }
 
   if (curproc->p_cwd != NULL) {
@@ -284,7 +280,7 @@ char *
 sys_getcwd(char buf[], size_t size)
 {
   if (buf == NULL || size == 0) {
-    errno = EINVAL;
+    //errno = EINVAL;
     return NULL;
   }
 
@@ -295,7 +291,7 @@ sys_getcwd(char buf[], size_t size)
 
   int result = vfs_getcwd(&cwd_uio);
   if (result) {
-    errno = result;
+    //errno = result;
     return NULL;
   }
 
