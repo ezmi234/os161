@@ -13,4 +13,14 @@ man/
 mk/
 testscripts/
 userland/
+.gdbinit.main
+.gdbinit.root
+.travis.yml
+.vscode/
+Dockerfile
+LICENSE
+build-kernel.sh
+build-toolchain.sh
+docker-compose.yml
+patches/
 .
