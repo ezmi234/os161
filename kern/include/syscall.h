@@ -46,7 +46,7 @@ void syscall(struct trapframe *tf);
  */
 
 /* Helper for fork(). You write this. */
-void enter_forked_process(struct trapframe *tf);
+void enter_forked_process(void *data, unsigned long unused);
 
 /* Enter user mode. Does not return. */
 __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
@@ -73,7 +73,7 @@ int sys_dup2(int oldf, int newfd);
 int sys_chdir(const char *path);
 char *sys_getcwd(char buf[], size_t size);
 pid_t sys_getpid(void);
-
+int sys_fork(struct trapframe *tf, pid_t *retval);
 #endif
 
 #endif /* _SYSCALL_H_ */

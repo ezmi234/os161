@@ -34,6 +34,7 @@
 #include <mips/trapframe.h>
 #include <current.h>
 #include <syscall.h>
+#include <addrspace.h>
 
 /*
  * System call dispatcher.
@@ -145,6 +146,9 @@ syscall(struct trapframe *tf)
 			retval = sys_getpid();
 			err = 0;
 		break;
+		case SYS_fork:
+			err = sys_fork(tf, &retval);
+		break;
 #endif
 
 	    default:
@@ -183,15 +187,23 @@ syscall(struct trapframe *tf)
 }
 
 /*
- * Enter user mode for a newly forked process.
- *
- * This function is provided as a reminder. You need to write
- * both it and the code that calls it.
- *
- * Thus, you can trash it and do things another way if you prefer.
+ * enter_forked_process - Function called by the child process thread after fork.
  */
-void
-enter_forked_process(struct trapframe *tf)
-{
-	(void)tf;
+void enter_forked_process(void *data, unsigned long unused) {
+	(void)unused;
+
+    struct trapframe tf = *(struct trapframe *)data;
+
+    kfree(data); // Free the allocated trapframe
+
+    /* Activate the new address space */
+    as_activate();
+
+    /* Modify the trapframe for the child */
+    tf.tf_v0 = 0;                 // Return value is 0 for the child
+    tf.tf_a3 = 0;                 // No error
+    tf.tf_epc += 4;               // Advance the program counter
+
+    /* Enter user mode */
+    mips_usermode(&tf);
 }
