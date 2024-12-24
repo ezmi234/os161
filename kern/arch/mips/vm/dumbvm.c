@@ -247,7 +247,7 @@ void free_kpages(vaddr_t addr) {
 
         unsigned long size = allocSize[frame];
         if (size == 0) {
-            kprintf("free_kpages: Attempt to free unallocated memory\n");
+            // kprintf("free_kpages: Attempt to free unallocated memory\n");
             return;
         }
 
