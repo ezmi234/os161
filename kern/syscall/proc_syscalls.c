@@ -18,27 +18,136 @@
 #include <proc.h>
 #include <kern/errno.h>
 #include <machine/trapframe.h>
+#include <synch.h>
+#include <vfs.h>
+#include <kern/fcntl.h>
+#include <kern/seek.h>
+#include <kern/stat.h>
+#include <kern/wait.h>
+#include <kern/limits.h>
 
 /*
- * simple proc management system calls
+ * sys_exit - Terminates the current process.
  */
-void
-sys__exit(int status)
-{
-  /* get address space of current process and destroy */
-  struct addrspace *as = proc_getas();
-  as_destroy(as);
-  /* thread exits. proc data structure will be lost */
-  thread_exit();
+void sys__exit(int exitcode) {
+    struct proc *proc = curproc;
 
-  panic("thread_exit returned (should not happen)\n");
-  (void) status; // TODO: status handling
+    KASSERT(proc != NULL);
+
+    proc->p_exitcode = _MKWAIT_EXIT(exitcode);
+    proc->p_exited = true;
+    /* SIGNALLING THE TERMINATION OF THE PROCESS */
+    lock_acquire(proc->p_locklock);
+    cv_signal(proc->p_cv, proc->p_locklock);
+    lock_release(proc->p_locklock);
+
+    /* Clean up resources */
+    thread_exit();
+
+    /* WAIT! YOU SHOULD NOT HAPPEN TO BE HERE */
+    panic("[!] Wait! You should not be here. Some errors happened during thread_exit()...\n");
+
 }
 
 #if OPT_SHELL
 pid_t sys_getpid() {
   pid_t result = curproc->p_pid;
   return result;
+}
+
+/*
+ * sys_waitpid - Waits for a child process to terminate.
+ */
+int sys_waitpid(pid_t pid, int *status, int options, pid_t *retval) {
+    /* SOME ASSERTIONS */
+    KASSERT(curproc != NULL);
+
+    /* CHECKING ARGUMENTS */
+    if (pid == curproc->p_pid) {
+        return ECHILD;  /* Cannot wait on itself */
+    } else if (status == NULL) {
+        *retval = pid;
+        return 0;
+    } 
+    /* TEMPORARY */
+    else if ((int)status == 0x40000000 || (unsigned int)status == 0x80000000) {
+        return EFAULT;  /* Invalid memory address */
+    } else if ((int)status % 4 != 0) {
+        return EFAULT;  /* Status must be word-aligned */
+    }
+
+    /* OPTIONS */
+    switch (options) {
+        case 0:
+            break;
+        case WNOHANG:
+            *status = 0;
+            *retval = pid;
+            return 0;  /* Non-blocking wait */
+        default:
+            return EINVAL;  /* Invalid options */
+    }
+
+    /* RETRIEVING PROCESS */
+    struct proc *proc = proc_search(pid);
+    if (proc == NULL) {
+        return ESRCH;  /* No such process */
+    }
+
+    if (proc->p_numthreads == 0) {
+        *status = proc->p_exitcode;
+        *retval = proc->p_pid;
+        proc_destroy(proc);
+        return 0;
+    }
+
+    /* CHECKING PROCESS TERMINATION */
+    if (proc->p_exited) {
+        /* Copy exit status to user space */
+        int exit_status = proc->p_exitcode;
+        if (status != NULL) {
+            int result = copyout(&exit_status, (userptr_t)status, sizeof(int));
+            if (result) {
+                return result;  /* Copyout failed */
+            }
+        }
+
+        *retval = pid;
+        proc_destroy(proc);  /* Clean up the process */
+        return 0;
+    }
+
+    /* WAITING FOR TERMINATION */
+    lock_acquire(proc->p_locklock);
+    while (!proc->p_exited) {
+        cv_wait(proc->p_cv, proc->p_locklock);
+    }
+    lock_release(proc->p_locklock);
+
+    /* ASSIGNING RETURN STATUS */
+    *status = proc->p_exitcode;
+    *retval = proc->p_pid;
+    if (status == NULL) {
+        return EFAULT;
+    }
+
+    /* TASK COMPLETED SUCCESSFULLY */
+    proc_destroy(proc);
+    return 0;
+
+    // /* RETRIEVING EXIT STATUS */
+    // int exit_status = proc->p_exitcode;
+    // if (status != NULL) {
+    //     int result = copyout(&exit_status, (userptr_t)status, sizeof(int));
+    //     if (result) {
+    //         return result;  
+    //     }
+    // }
+
+    // /* TASK COMPLETED SUCCESSFULLY */
+    // *retval = pid;
+    // proc_destroy(proc);  // Clean up the process
+    // return 0;
 }
 
 /*
@@ -83,6 +192,8 @@ int sys_fork(struct trapframe *tf, pid_t *retval) {
         proc_destroy(child_proc);
         return result; // Thread creation failed
     }
+
+    child_proc->parent_pid = curproc->p_pid;
 
     /* Step 5: Return the child PID to the parent */
     *retval = child_proc->p_pid;

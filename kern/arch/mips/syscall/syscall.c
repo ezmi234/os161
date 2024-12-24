@@ -127,8 +127,9 @@ syscall(struct trapframe *tf)
 			else err = 0;
         break;
 	    case SYS__exit:
- 	        sys__exit((int)tf->tf_a0);
-        break;
+    		sys__exit((int)tf->tf_a0);
+			err = 0;
+    	break;
 		case SYS_dup2:
 			err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1);
     	break;
@@ -148,6 +149,9 @@ syscall(struct trapframe *tf)
 		break;
 		case SYS_fork:
 			err = sys_fork(tf, &retval);
+		break;
+		case SYS_waitpid:
+			err = sys_waitpid((pid_t)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval);
 		break;
 #endif
 

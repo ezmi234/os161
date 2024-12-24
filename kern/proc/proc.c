@@ -69,6 +69,7 @@ static struct process_table processTable;
 void process_table_init(void) {
     spinlock_init(&processTable.lock);
     processTable.proc[0] = kproc;  /* Kernel process */
+	kproc->p_pid = 0;
     for (int i = 1; i <= PROC_MAX; i++) {
         processTable.proc[i] = NULL;
     }
@@ -109,7 +110,22 @@ int proc_add(pid_t pid, struct proc *proc) {
     spinlock_acquire(&processTable.lock);
     processTable.proc[pid] = proc;
     spinlock_release(&processTable.lock);
-    return 0;
+	/* PROCESS STATUS INITIALIZATION */
+	proc->p_exited = false;
+
+	/*SETTING FATHER PID AS -1*/
+	/*FOR THE FIRST PROCESS IT WILL NOT BE CHANGED*/
+	proc->parent_pid=-1;
+
+	/* PROCESS CV AND LOCK INITIALIZATION */
+	proc->p_cv = cv_create("proc_cv");
+  	proc->p_locklock = lock_create("proc_locklock");
+	if (proc->p_cv == NULL || proc->p_locklock == NULL) {
+		return -1;
+	}
+
+	/* TASK COMPLETED SUCCESSFULLY */
+	return proc->p_pid;
 }
 
 /*

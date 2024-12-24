@@ -97,6 +97,8 @@ struct proc {
 	int p_exitcode;							/* Exit code */
 	bool p_exited;							/* Process exited */
 	struct cv *p_cv;						/* Condition variable */
+	pid_t parent_pid;						/* Parent process ID */
+	struct lock *p_locklock;				/* Lock for this structure */
 #endif
 };
 
