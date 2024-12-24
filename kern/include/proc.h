@@ -37,6 +37,8 @@
  */
 
 #include <spinlock.h>
+#include <limits.h>
+#include "opt-shell.h"
 
 struct addrspace;
 struct thread;
@@ -70,7 +72,15 @@ struct proc {
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
 
-	/* add more material here as needed */
+#if OPT_SHELL
+
+	/* File table */
+	struct openfile *fileTable[OPEN_MAX];
+
+	/* Process ID */
+	pid_t p_pid;
+
+#endif
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
