@@ -20,7 +20,7 @@
 #include <lib.h>
 #include <kern/seek.h>
 #include <kern/stat.h>
-#include <../../../userland/lib/libc/unix/errno.c>
+#include <synch.h>
 
 #if OPT_SHELL
 
