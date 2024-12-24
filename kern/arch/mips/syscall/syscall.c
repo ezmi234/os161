@@ -28,7 +28,6 @@
  */
 
 #include <types.h>
-#include <../../../userland/lib/libc/unix/errno.c>
 #include <kern/errno.h>
 #include <kern/syscall.h>
 #include <lib.h>
@@ -130,18 +129,16 @@ syscall(struct trapframe *tf)
  	        sys__exit((int)tf->tf_a0);
         break;
 		case SYS_dup2:
-			retval = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1);
-    		if (retval < 0) err = errno;
+			err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1);
     	break;
 		case SYS_chdir:
-			retval = sys_chdir((const char *)tf->tf_a0);
-			if (retval < 0) err = errno;
+			err = sys_chdir((const char *)tf->tf_a0);
 		break;
 		case SYS___getcwd: {
 			char *result;
 			result = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1);
-			if (result == NULL) retval = -1;
-			if (retval < 0) err = errno;
+			// if (result == NULL) retval = -1;
+			if (result == NULL) err = -1;
 		break;
 		}
 		case SYS_getpid:
