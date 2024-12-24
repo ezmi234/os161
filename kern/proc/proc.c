@@ -59,6 +59,88 @@
  */
 struct proc *kproc;
 
+#if OPT_SHELL
+
+static struct process_table processTable;
+
+/*
+ * Initialize the process table.
+ */
+void process_table_init(void) {
+    spinlock_init(&processTable.lock);
+    processTable.proc[0] = kproc;  /* Kernel process */
+    for (int i = 1; i <= PROC_MAX; i++) {
+        processTable.proc[i] = NULL;
+    }
+    processTable.last_pid = 0;
+    processTable.active = true;
+}
+
+/*
+ * Find a valid PID for a new process.
+ */
+static pid_t find_valid_pid(void) {
+    pid_t pid;
+    spinlock_acquire(&processTable.lock);
+
+    /* Circular PID allocation */
+    pid = (processTable.last_pid + 1 > PROC_MAX) ? 1 : processTable.last_pid + 1;
+    while (pid != processTable.last_pid) {
+        if (processTable.proc[pid] == NULL) {
+            processTable.last_pid = pid;
+            spinlock_release(&processTable.lock);
+            return pid;
+        }
+        pid = (pid + 1 > PROC_MAX) ? 1 : pid + 1;
+    }
+
+    spinlock_release(&processTable.lock);
+    return -1;  /* No available PID */
+}
+
+/*
+ * Add a process to the process table.
+ */
+int proc_add(pid_t pid, struct proc *proc) {
+    if (pid <= 0 || pid > PROC_MAX || proc == NULL) {
+        return -1;
+    }
+
+    spinlock_acquire(&processTable.lock);
+    processTable.proc[pid] = proc;
+    spinlock_release(&processTable.lock);
+    return 0;
+}
+
+/*
+ * Remove a process from the process table.
+ */
+void proc_remove(pid_t pid) {
+    if (pid <= 0 || pid > PROC_MAX) {
+        return;
+    }
+
+    spinlock_acquire(&processTable.lock);
+    processTable.proc[pid] = NULL;
+    spinlock_release(&processTable.lock);
+}
+
+/*
+ * Retrieve a process from the process table by PID.
+ */
+struct proc *proc_search(pid_t pid) {
+    if (pid <= 0 || pid > PROC_MAX) {
+        return NULL;
+    }
+
+    spinlock_acquire(&processTable.lock);
+    struct proc *proc = processTable.proc[pid];
+    spinlock_release(&processTable.lock);
+    return proc;
+}
+
+#endif /* OPT_SHELL */
+
 /*
  * Create a proc structure.
  */
@@ -93,6 +175,16 @@ proc_create(const char *name)
 		proc->fileTable[i] = NULL;
 	}
 
+	/* Add to the process table */
+	pid_t pid = find_valid_pid();
+    if (pid < 0 || proc_add(pid, proc) != 0) {
+        kfree(proc->p_name);
+        kfree(proc);
+        return NULL;
+    }
+
+    proc->p_pid = pid;
+
 #endif
 
 	return proc;
@@ -117,6 +209,11 @@ proc_destroy(struct proc *proc)
 
 	KASSERT(proc != NULL);
 	KASSERT(proc != kproc);
+
+#if OPT_SHELL
+	/* Remove from the process table */
+	proc_remove(proc->p_pid);
+#endif
 
 	/*
 	 * We don't take p_lock in here because we must have the only
@@ -213,6 +310,10 @@ proc_bootstrap(void)
 	if (kproc == NULL) {
 		panic("proc_create for kproc failed\n");
 	}
+
+#if OPT_SHELL
+	process_table_init();
+#endif
 }
 
 /*
