@@ -75,6 +75,7 @@ char *sys_getcwd(char buf[], size_t size);
 pid_t sys_getpid(void);
 int sys_waitpid(pid_t pid, int *status, int options, pid_t *retval);
 int sys_fork(struct trapframe *tf, pid_t *retval);
+int sys_execv(const char *program, char **args);
 #endif
 
 #endif /* _SYSCALL_H_ */
