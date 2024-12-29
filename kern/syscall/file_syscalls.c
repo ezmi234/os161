@@ -24,66 +24,117 @@
 
 #if OPT_SHELL
 
+#define SYSTEM_OPEN_MAX (10*OPEN_MAX)
+
+struct openfile systemFileTable[SYSTEM_OPEN_MAX];
+
 #define MAX_OPEN_FILES 128 // Define maximum open files per process
 
 /* Open a file */
-int sys_open(const char *pathname, int flags, mode_t mode)
-{
-  struct vnode *vn;
-  struct openfile *file;
-  char kpath[PATH_MAX];
-  int fd, result;
+int sys_open(userptr_t pathname, int openflags, mode_t mode, int *retval) {
 
-  // Copy the pathname from user space
-  result = copyinstr((userptr_t)pathname, kpath, sizeof(kpath), NULL);
-  if (result)
-  {
-    return result; // Return error code
-  }
-
-  // Open the vnode using vfs_open
-  result = vfs_open(kpath, flags, mode, &vn);
-  if (result)
-  {
-    return result; // Return error code
-  }
-
-  // Allocate and initialize an openfile structure
-  file = kmalloc(sizeof(struct openfile));
-  if (file == NULL)
-  {
-    vfs_close(vn);
-    return ENOMEM;
-  }
-
-  file->vn = vn;
-  file->offset = 0;
-  file->mode = flags;
-  file->count = 1;
-  file->lock = lock_create("openfile lock");
-  if (file->lock == NULL)
-  {
-    vfs_close(vn);
-    kfree(file);
-    return ENOMEM;
-  }
-
-  // Find an available file descriptor
-  for (fd = 0; fd < OPEN_MAX; fd++)
-  {
-    if (curproc->fileTable[fd] == NULL)
-    {
-      curproc->fileTable[fd] = file;
-      return fd; // Return file descriptor
+    /* CHECKING INPUT ARGUMENTS */
+    if (pathname == NULL) {
+        return EFAULT;
     }
-  }
 
-  // No free file descriptors
-  lock_destroy(file->lock);
-  vfs_close(vn);
-  kfree(file);
-  return EMFILE; // Too many open files
+    /* COPYING PATHNAME TO KERNEL SIDE */
+    char *kbuffer = (char *)kmalloc(PATH_MAX * sizeof(char));
+    if (kbuffer == NULL) {
+        return ENOMEM;
+    }
+    size_t len;
+    int err = copyinstr((const_userptr_t)pathname, kbuffer, PATH_MAX, &len);
+    if (err) {
+        kfree(kbuffer);
+        return EFAULT;
+    }
+
+    /* OPENING WITH VFS UTILITY */
+    struct vnode *v;
+    err = vfs_open(kbuffer, openflags, mode, &v);
+    if (err) {
+        kfree(kbuffer);
+        return err;
+    }
+    kfree(kbuffer);
+
+    /* RETRIEVING A FREE POSITION IN THE SYSTEM FILETABLE */
+    struct openfile *of = NULL;
+    for (int index = 0; index < MAX_OPEN_FILES; index++) {
+        if (systemFileTable[index].vn == NULL) {
+            of = &systemFileTable[index];
+            of->vn = v;
+            break;
+        }
+    }
+
+    /* ASSIGNING OPENFILE TO CURRENT PROCESS FILETABLE */
+    int fd = 3; // Skipping STDIN, STDOUT, and STDERR
+    if (of == NULL) {
+        vfs_close(v);
+        return ENFILE; // System file table is full
+    } else {
+        for (; fd < OPEN_MAX; fd++) {
+            if (curproc->fileTable[fd] == NULL) {
+                curproc->fileTable[fd] = of;
+                break;
+            }
+        }
+
+        if (fd == OPEN_MAX) {
+            vfs_close(v);
+            return EMFILE; // Process file table is full
+        }
+    }
+
+    /* MANAGING OFFSET */
+    if (openflags & O_APPEND) {
+        struct stat filestat;
+        err = VOP_STAT(of->vn, &filestat);
+        if (err) {
+            curproc->fileTable[fd] = NULL;
+            vfs_close(v);
+            return err;
+        }
+        curproc->fileTable[fd]->offset = filestat.st_size;
+    } else {
+        curproc->fileTable[fd]->offset = 0;
+    }
+
+    /* MANAGING REFERENCES */
+    curproc->fileTable[fd]->count = 1;
+
+    /* MANAGING MODE */
+    switch (openflags & O_ACCMODE) {
+        case O_RDONLY:
+            curproc->fileTable[fd]->mode = O_RDONLY;
+            break;
+        case O_WRONLY:
+            curproc->fileTable[fd]->mode = O_WRONLY;
+            break;
+        case O_RDWR:
+            curproc->fileTable[fd]->mode = O_RDWR;
+            break;
+        default:
+            vfs_close(of->vn);
+            curproc->fileTable[fd] = NULL;
+            return EINVAL;
+    }
+
+    /* CREATING LOCK ON THIS FILE */
+    curproc->fileTable[fd]->lock = lock_create("FILE_LOCK");
+    if (curproc->fileTable[fd]->lock == NULL) {
+        vfs_close(of->vn);
+        curproc->fileTable[fd] = NULL;
+        return ENOMEM;
+    }
+
+    /* TASK COMPLETED SUCCESSFULLY */
+    *retval = fd;
+    return 0;
 }
+
 
 int sys_close(int fd)
 {
