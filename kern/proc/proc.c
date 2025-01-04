@@ -195,7 +195,7 @@ proc_create(const char *name)
 
 	/* Add to the process table */
 	pid_t pid = find_valid_pid();
-    if (pid < 0 || proc_add(pid, proc) != 0) {
+    if (pid < 0 || proc_add(pid, proc) == -1) {
         kfree(proc->p_name);
         kfree(proc);
         return NULL;
@@ -305,11 +305,11 @@ proc_destroy(struct proc *proc)
 			if (proc->fileTable[i]->count == 0) {
 				vfs_close(proc->fileTable[i]->vn);
 				lock_destroy(proc->fileTable[i]->lock);
-				kfree(proc->fileTable[i]);
 			}
 
 			proc->fileTable[i] = NULL;
 		}
+		kfree(proc->fileTable[i]);
 	}
 
 #endif
