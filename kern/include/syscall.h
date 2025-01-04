@@ -63,11 +63,11 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 // System calls
 #if OPT_SHELL
 
-int sys_write(int fd, userptr_t buf_ptr, size_t size);
-int sys_read(int fd, userptr_t buf_ptr, size_t size);
+ssize_t sys_read(int fd, const void *usr_buf, size_t len, int32_t *retval);
+ssize_t sys_write(int fd, const void *usr_buf, size_t len, int32_t *retval);
 int sys_open(userptr_t pathname, int openflags, mode_t mode, int *retval);
 int sys_close(int fd);
-off_t sys_lseek(int fd, off_t offset, int whence);
+int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *retval_upp32);
 void sys__exit(int exitcode);
 int sys_dup2(int oldf, int newfd);
 int sys_chdir(const char *path);
