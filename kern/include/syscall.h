@@ -69,7 +69,7 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval);
 int sys_close(int fd);
 off_t sys_lseek(int fd, off_t offset, int whence);
 void sys__exit(int exitcode);
-int sys_dup2(int oldf, int newfd);
+int sys_dup2(int oldf, int newfd, int32_t *retval);
 int sys_chdir(const char *path);
 int sys_getcwd(char buf[], size_t size, int32_t *retval);
 pid_t sys_getpid(void);

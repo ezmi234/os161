@@ -284,16 +284,15 @@ int sys_read(int fd, userptr_t buf_ptr, size_t size)
 
   return (int)size;
 }
-
 #endif
+
 #if OPT_SHELL
 int
-sys_dup2(int oldfd, int newfd)
+sys_dup2(int oldfd, int newfd, int32_t *retval)
 {
   // preliminary checks
-  if (oldfd < 0 || oldfd > OPEN_MAX || newfd < 0 || newfd > OPEN_MAX) {
+  if (oldfd < 0 || oldfd >= OPEN_MAX || newfd < 0 || newfd >= OPEN_MAX) {
     return EBADF;
-    
   }
 
   if (curproc->fileTable[oldfd] == NULL) {
@@ -307,13 +306,24 @@ sys_dup2(int oldfd, int newfd)
 
   // special case: newfd is already open
   if (curproc->fileTable[newfd] != NULL) {
-    // sys_close
-    return -1;
+    struct openfile *of = curproc->fileTable[newfd];
+    lock_acquire(of->lock);
+    curproc->fileTable[newfd] = NULL;
+    if (--of->count == 0) {
+      struct vnode *vn = of->vn;
+      of->vn = NULL;
+      vfs_close(vn);
+    }
+    lock_release(of->lock);
   }
 
+  lock_acquire(curproc->fileTable[oldfd]->lock);
   curproc->fileTable[newfd] = curproc->fileTable[oldfd];
   curproc->fileTable[newfd]->count++;
-  return newfd;
+  lock_release(curproc->fileTable[oldfd]->lock);
+
+  *retval = newfd;
+  return 0;
 }
 #endif
 
