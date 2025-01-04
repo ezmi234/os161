@@ -137,6 +137,8 @@ void proc_remove(pid_t pid) {
     }
 
     spinlock_acquire(&processTable.lock);
+	cv_destroy(processTable.proc[pid]->p_cv);
+  	lock_destroy(processTable.proc[pid]->p_locklock);
     processTable.proc[pid] = NULL;
     spinlock_release(&processTable.lock);
 }
