@@ -276,25 +276,28 @@ sys_chdir(const char *path)
 #endif
 
 #if OPT_SHELL
-char *
-sys_getcwd(char buf[], size_t size)
+int
+sys_getcwd(char buf[], size_t size, int32_t *retlen)
 {
-  if (buf == NULL || size == 0) {
-    //errno = EINVAL;
-    return NULL;
+  if (size == 0) {
+    return EINVAL;
+  }
+
+  int result = copyin((const_userptr_t)buf, buf, 1);
+  if (result) {
+      return result;
   }
 
   struct iovec iovec_buf;
   struct uio cwd_uio;
-
   uio_kinit(&iovec_buf, &cwd_uio, (userptr_t)buf, size, 0, UIO_READ);
 
-  int result = vfs_getcwd(&cwd_uio);
+  result = vfs_getcwd(&cwd_uio);
   if (result) {
-    //errno = result;
-    return NULL;
+    return result;
   }
 
-  return buf;
+  *retlen = size - cwd_uio.uio_resid;
+  return 0;
 }
 #endif

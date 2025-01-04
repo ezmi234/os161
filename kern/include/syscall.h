@@ -71,7 +71,7 @@ off_t sys_lseek(int fd, off_t offset, int whence);
 void sys__exit(int exitcode);
 int sys_dup2(int oldf, int newfd);
 int sys_chdir(const char *path);
-char *sys_getcwd(char buf[], size_t size);
+int sys_getcwd(char buf[], size_t size, int32_t *retval);
 pid_t sys_getpid(void);
 int sys_waitpid(pid_t pid, int *status, int options, pid_t *retval);
 int sys_fork(struct trapframe *tf, pid_t *retval);
