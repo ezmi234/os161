@@ -339,52 +339,43 @@ proc_bootstrap(void)
 }
 
 #if OPT_SHELL
+static int console_init(const char *lock_name, struct proc *proc, int fd, int flag) {
 
-int proc_init_std_fds(struct proc *proc)
-{
-    struct vnode *vn;
-    int result;
+	/* ASSIGNMENT OF THE CONSOLE NAME */
+	char *con = kstrdup("con:");
+	if (con == NULL) {
+		return -1;
+	}
 
-    /* Open "con:" for standard input (stdin) */
-    result = vfs_open((char *)"con:", O_RDONLY, 0, &vn);
+	/* ALLOCATING SPACE IN THE FILETABLE */
+	proc->fileTable[fd] = (struct openfile *) kmalloc(sizeof(struct openfile));
+	if (proc->fileTable[fd] == NULL) {
+		kfree(con);
+		return -1;
+	}
 
-    if (result) {
-        return result;
-    }
-    proc->fileTable[STDIN_FILENO] = kmalloc(sizeof(struct openfile));
-    proc->fileTable[STDIN_FILENO]->vn = vn;
-    proc->fileTable[STDIN_FILENO]->offset = 0;
-    proc->fileTable[STDIN_FILENO]->mode = O_RDONLY;
-    proc->fileTable[STDIN_FILENO]->lock = lock_create("stdin_lock");
+	/* OPENING ASSOCIATED FILE */
+	int err = vfs_open(con, flag, 0644, &proc->fileTable[fd]->vn);
+	if (err) {
+		kfree(con);
+		kfree(proc->fileTable[fd]);
+		return -1;
+	}
+	kfree(con);
 
-    /* Open "con:" for standard output (stdout) */
-    result = vfs_open((char *)"con:", O_WRONLY, 0, &vn);
-    if (result) {
-        kfree(proc->fileTable[STDIN_FILENO]);
-        return result;
-    }
-    proc->fileTable[STDOUT_FILENO] = kmalloc(sizeof(struct openfile));
-    proc->fileTable[STDOUT_FILENO]->vn = vn;
-    proc->fileTable[STDOUT_FILENO]->offset = 0;
-    proc->fileTable[STDOUT_FILENO]->mode = O_WRONLY;
-    proc->fileTable[STDOUT_FILENO]->lock = lock_create("stdout_lock");
+	/* INITIALIZATION OF VALUES */
+	proc->fileTable[fd]->offset = 0;
+	proc->fileTable[fd]->lock = lock_create(lock_name);
+	if (proc->fileTable[fd]->lock == NULL) {
+		vfs_close(proc->fileTable[fd]->vn);
+		kfree(proc->fileTable[fd]);
+		return -1;
+	}
+	proc->fileTable[fd]->count = 1;
+	proc->fileTable[fd]->mode = flag;
 
-    /* Open "con:" for standard error (stderr) */
-    result = vfs_open((char *)"con:", O_WRONLY, 0, &vn);
-    if (result) {
-        kfree(proc->fileTable[STDIN_FILENO]);
-        kfree(proc->fileTable[STDOUT_FILENO]);
-        return result;
-    }
-    proc->fileTable[STDERR_FILENO] = kmalloc(sizeof(struct openfile));
-    proc->fileTable[STDERR_FILENO]->vn = vn;
-    proc->fileTable[STDERR_FILENO]->offset = 0;
-    proc->fileTable[STDERR_FILENO]->mode = O_WRONLY;
-    proc->fileTable[STDERR_FILENO]->lock = lock_create("stderr_lock");
-
-    return 0;  /* Success */
+	return 0;
 }
-
 #endif
 
 /*
@@ -409,11 +400,16 @@ proc_create_runprogram(const char *name)
 
 	/* VFS fields */
 
-	/* Initialize standard file descriptors (stdin, stdout, stderr) */
-    if (proc_init_std_fds(newproc) != 0) {
-        proc_destroy(newproc);
-        return NULL;
-    }
+	#if OPT_SHELL
+	/* CONSOLE INITIALIZATION FOR STDIN, STDOUT AND STDERR */
+	if (console_init("STDIN", newproc, 0, O_RDONLY) == -1) {
+		return NULL;
+	} else if (console_init("STDOUT", newproc, 1, O_WRONLY) == -1) {
+		return NULL;
+	} else if (console_init("STDERR", newproc, 2, O_WRONLY) == -1) {
+		return NULL;
+	}
+	#endif
 
 	/*
 	 * Lock the current process to copy its current directory.
