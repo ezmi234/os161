@@ -26,6 +26,132 @@
 
 #define MAX_OPEN_FILES 128 // Define maximum open files per process
 
+#if OPT_SHELL
+ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval) {
+
+    /* CHECKING FILE DESCRIPTOR */
+    if (fd < 0 || fd >= OPEN_MAX) {                                 /* fd should be a valid number */
+        return EBADF;
+    }
+    struct openfile *file_entry = curproc->fileTable[fd];
+    if (file_entry == NULL) {                                       /* fd should refer to a valid entry */
+        return EBADF;
+    }
+    if ((file_entry->mode & O_ACCMODE) == O_RDONLY) {               /* fd should be writable */
+        return EBADF;
+    }
+
+    /* COPYING BUFFER TO KERNEL SIDE */
+    char *kbuffer = (char *)kmalloc(buflen);
+    if (kbuffer == NULL) {
+        return ENOMEM;
+    }
+    if (copyin((const_userptr_t)buf, kbuffer, buflen)) {
+        kfree(kbuffer);
+        return EFAULT;
+    }
+
+    /* SETUP FOR WRITING */
+    struct iovec iov;
+    struct uio uio_write;
+    struct vnode *vn = file_entry->vn;
+
+    /* ENSURE FILE IS WRITABLE */
+    if (vn == NULL) {
+        kfree(kbuffer);
+        return EIO;
+    }
+
+    lock_acquire(file_entry->lock);
+    uio_kinit(&iov, &uio_write, kbuffer, buflen, file_entry->offset, UIO_WRITE);
+    int error = VOP_WRITE(vn, &uio_write);
+    if (error) {
+        kfree(kbuffer);
+        lock_release(file_entry->lock);
+        return error;
+    }
+
+    /* UPDATE OFFSET */
+    off_t bytes_written = buflen - uio_write.uio_resid;
+    *retval = (int32_t)bytes_written;
+    file_entry->offset = uio_write.uio_offset;
+
+    /* CLEANUP */
+    lock_release(file_entry->lock);
+    kfree(kbuffer);
+
+    return 0;
+}
+
+#endif
+
+/**
+ * @brief sys_read_SHELL() reads up to buflen bytes from the file specified by fd, at the 
+ *        location in the file specified by the current seek position of the file, and 
+ *        stores them in the space pointed to by buf. The file must be open for reading.
+ *  
+ *        The current seek position of the file is advanced by the number of bytes read. 
+ * 
+ * @param fd source file
+ * @param buf destination buffer
+ * @param count number of bytes to be read
+ * @return zero on success. an error value in case of failure
+*/
+#if OPT_SHELL
+ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval) {
+
+    /* CHECKING FILE DESCRIPTOR */
+    if (fd < 0 || fd >= OPEN_MAX) {                                 /* fd should be a valid number                          */
+        return EBADF;       
+    } else if (curproc->fileTable[fd] == NULL) {                    /* fd should refer to a valid entry in the fileTable    */
+        return EBADF;
+    } else if (curproc->fileTable[fd]->mode == O_WRONLY) {     /* fd should refer to a file allowed to be read         */
+        return EBADF;
+    } else if (buf == NULL) {
+        return EFAULT;
+    } 
+
+    /* PREPARING KERNEL BUFFER */
+    char *kbuffer = (char *) kmalloc((buflen+1) * sizeof(char));
+    if (kbuffer == NULL) {
+        return ENOMEM;
+    }
+
+    /* PERFORMING READING (VOP_READ()) */
+    struct openfile *of = curproc->fileTable[fd];
+    struct iovec iov;
+    struct uio kuio;
+    struct vnode *vn = of->vn;
+    lock_acquire(of->lock);
+    uio_kinit(&iov, &kuio, kbuffer, buflen, of->offset, UIO_READ);
+    int err = VOP_READ(vn, &kuio);
+    if (err) {
+        kfree(kbuffer);
+        lock_release(of->lock);
+        return err;
+    }
+
+    /* REPOSITION OF THE OFFSET */
+    of->offset = kuio.uio_offset;
+    *retval = buflen - kuio.uio_resid;
+
+    /* COPYING BUFFER TO USER SIDE (COPYOUT()) */
+    err = copyout(kbuffer, (userptr_t) buf, *retval);
+    if (err) {
+        kfree(kbuffer);
+        lock_release(of->lock);
+        return EFAULT;
+    }
+
+    /* FREEING KERNEL BUFFER */
+    lock_release(of->lock);
+    kfree(kbuffer);
+
+    /* TASK COMPLETED SUCCESSFULLY */
+    return 0;
+}
+#endif
+
 /* Open a file */
 int sys_open(const char *pathname, int flags, mode_t mode, int *retval) {
 
