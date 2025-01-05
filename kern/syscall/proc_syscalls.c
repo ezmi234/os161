@@ -58,7 +58,7 @@ pid_t sys_getpid() {
 /*
  * sys_waitpid - Waits for a child process to terminate.
  */
-int sys_waitpid(pid_t pid, int *status, int options, pid_t *retval) {
+int sys_waitpid(pid_t pid, int *status, int options, int *retval) {
     /* SOME ASSERTIONS */
     KASSERT(curproc != NULL);
 
@@ -93,6 +93,11 @@ int sys_waitpid(pid_t pid, int *status, int options, pid_t *retval) {
     if (proc == NULL) {
         return ESRCH;  /* No such process */
     }
+
+    /* CHECKING IF THE PROCESS IS A CHILD */
+    if (proc->parent_pid != curproc->p_pid) {
+        return ECHILD;  /* Not a child process */
+    }    
 
     if (proc->p_numthreads == 0) {
         *status = proc->p_exitcode;
@@ -158,9 +163,13 @@ int sys_fork(struct trapframe *tf, pid_t *retval) {
     struct trapframe *child_tf;
     int result;
 
+    /* ASSERTING CURRENT PROCESS TO ACTUALLY EXIST */
+    KASSERT(curproc != NULL);
+
     /* Step 1: Create a new process */
     child_proc = proc_create_runprogram(curproc->p_name);
     if (child_proc == NULL) {
+        proc_destroy(child_proc);
         return ENOMEM; // Out of memory
     }
 

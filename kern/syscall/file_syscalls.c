@@ -21,6 +21,7 @@
 #include <kern/seek.h>
 #include <kern/stat.h>
 #include <synch.h>
+#include <kern/limits.h>
 
 #if OPT_SHELL
 
@@ -390,6 +391,108 @@ off_t sys_lseek(int fd, off_t offset, int whence)
 //   return (int)size;
 // }
 
+ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval) {
+    /* VALIDATE FILE DESCRIPTOR */
+    if (fd < 0 || fd >= OPEN_MAX) {
+        return EBADF;  /* Invalid file descriptor */
+    }
+    if (curproc == NULL || curproc->fileTable == NULL) {
+        return EFAULT;  /* curproc should not be NULL */
+    }
+
+    if (curproc->fileTable[fd] == NULL) {                    
+        return EBADF;  /* File descriptor is not in use */
+    }
+    if (curproc->fileTable[fd]->mode == O_WRONLY) {    
+        return EBADF;  /* File is not open for reading */
+    }
+    if (buf == NULL) {
+        return EFAULT;  /* Invalid buffer pointer */
+    }
+
+    /* HANDLE READING FROM STDIN */
+    if (fd == STDIN_FILENO) {
+        char *kbuffer = (char *)kmalloc(buflen * sizeof(char));
+        if (kbuffer == NULL) {
+            return ENOMEM;  /* Memory allocation failed */
+        }
+
+        /* READ FROM STDIN */
+        unsigned int i = 0;
+        while (i < buflen) {
+            kbuffer[i] = getch();
+            if (kbuffer[i] == '\n') {
+                break;
+            }
+            i++;
+        }
+
+        /* COPY BUFFER TO USER SPACE */
+        int err = copyout(kbuffer, (userptr_t)buf, i);
+        if (err) {
+            kfree(kbuffer);
+            return EFAULT;  /* Error copying data to user space */
+        }
+
+        /* SET RETURN VALUE (BYTES READ) */
+        *retval = i;
+
+        /* FREE BUFFER */
+        kfree(kbuffer);
+
+        /* SUCCESS */
+        return 0;
+    }
+
+    /* PREPARING KERNEL BUFFER */
+    char *kbuffer = (char *)kmalloc(buflen * sizeof(char));
+    if (kbuffer == NULL) {
+        return ENOMEM;  /* Memory allocation failed */
+    }
+
+    /* RETRIEVE FILE OBJECT */
+    struct openfile *of = curproc->fileTable[fd];
+    struct iovec iov;
+    struct uio kuio;
+    struct vnode *vn = of->vn;
+
+    /* ACQUIRE LOCK */
+    lock_acquire(of->lock);
+
+    /* INITIALIZE UIO FOR KERNEL BUFFER */
+    uio_kinit(&iov, &kuio, kbuffer, buflen, of->offset, UIO_READ);
+
+    /* PERFORM READ OPERATION */
+    int err = VOP_READ(vn, &kuio);
+    if (err) {
+        kfree(kbuffer);
+        lock_release(of->lock);
+        return err;  /* Error during file read */
+    }
+
+    /* UPDATE FILE OFFSET */
+    of->offset = kuio.uio_offset;
+
+    /* SET RETURN VALUE (BYTES READ) */
+    *retval = buflen - kuio.uio_resid;
+
+    /* COPY BUFFER TO USER SPACE */
+    err = copyout(kbuffer, (userptr_t)buf, *retval);
+    if (err) {
+        kfree(kbuffer);
+        lock_release(of->lock);
+        return EFAULT;  /* Error copying data to user space */
+    }
+
+    /* RELEASE LOCK AND FREE BUFFER */
+    lock_release(of->lock);
+    kfree(kbuffer);
+
+    /* SUCCESS */
+    return 0;
+}
+
+
 ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval) {
     /* CHECKING FILE DESCRIPTOR */
     if (fd < 0 || fd >= OPEN_MAX) {     
@@ -453,116 +556,6 @@ ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval) {
 }
 
 
-
-// int sys_read(int fd, userptr_t buf_ptr, size_t size)
-// {
-//   int i;
-//   char *p = (char *)buf_ptr;
-
-//   if (fd != STDIN_FILENO)
-//   {
-//     kprintf("sys_read supported only to stdin\n");
-//     return -1;
-//   }
-
-//   for (i = 0; i < (int)size; i++)
-//   {
-//     p[i] = getch();
-//     if (p[i] < 0)
-//       return i;
-//   }
-
-//   return (int)size;
-// }
-
-ssize_t sys_read(int fd, userptr_t buf, size_t buflen, int32_t *retval) {
-    struct openfile *of;
-    struct iovec iov;
-    struct uio kuio;
-    struct vnode *vn;
-    int err;
-
-    /* Validate File Descriptor */
-    if (fd < 0 || fd >= OPEN_MAX) {                                
-        return EBADF;  /* Invalid file descriptor */
-    }
-
-    if (curproc == NULL || curproc->fileTable == NULL) {
-        return EFAULT;  /* curproc should not be NULL */
-    }
-
-    if (curproc->fileTable[fd] == NULL) {                    
-        return EBADF;  /* File descriptor is not in use */
-    }
-
-    if (curproc->fileTable[fd]->mode == O_WRONLY) {    
-        return EBADF;  /* File is not open for reading */
-    }
-
-    if (buf == NULL) {
-        return EFAULT;  /* Invalid user buffer pointer */
-    }
-
-    of = curproc->fileTable[fd];
-
-    /* Handle Reading from STDIN */
-    if (fd == STDIN_FILENO) {
-        char ch;
-        kgets(&ch, 1);  /* Read a single character from stdin */
-        if (ch < 0) {
-            return EIO;  /* Input error */
-        }
-        err = copyout(&ch, buf, 1);
-        if (err) {
-            return EFAULT;  /* Copy to user space failed */
-        }
-        *retval = 1;
-        return 0;
-    }
-
-    /* Allocate Kernel Buffer */
-    char *kbuffer = (char *) kmalloc(buflen);
-    if (kbuffer == NULL) {
-        return ENOMEM;  /* Memory allocation failed */
-    }
-
-    /* Retrieve File Object */
-    vn = of->vn;
-
-    /* Acquire File Lock */
-    lock_acquire(of->lock);
-
-    /* Initialize UIO for Kernel Buffer */
-    uio_kinit(&iov, &kuio, kbuffer, buflen, of->offset, UIO_READ);
-
-    /* Perform Read Operation */
-    err = VOP_READ(vn, &kuio);
-    if (err) {
-        kfree(kbuffer);
-        lock_release(of->lock);
-        return err;  /* Error during file read */
-    }
-
-    /* Update File Offset */
-    of->offset = kuio.uio_offset;
-
-    /* Set Return Value (Bytes Read) */
-    *retval = buflen - kuio.uio_resid;
-
-    /* Validate Copy to User Space */
-    err = copyout(kbuffer, buf, *retval);
-    if (err) {
-        kfree(kbuffer);
-        lock_release(of->lock);
-        return EFAULT;  /* Copying to user space failed */
-    }
-
-    /* Release Lock and Free Buffer */
-    lock_release(of->lock);
-    kfree(kbuffer);
-
-    return 0;
-}
 
 
 #endif
@@ -646,5 +639,16 @@ sys_getcwd(char buf[], size_t size)
   }
 
   return buf;
+}
+#endif
+
+#if OPT_SHELL
+int sys_remove(const char *pathname) {
+
+    /* NOT IMPLEMENTED (YET?) */
+    (void) pathname;
+
+    /* TASK COMPLETED SUCCESSFULLY */
+    return 0;
 }
 #endif
