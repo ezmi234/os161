@@ -53,6 +53,8 @@
 #include <synch.h>
 #include "openfile.h"
 #include "opt-shell.h"
+#include <kern/unistd.h>
+#include <kern/fcntl.h>
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -189,9 +191,11 @@ proc_create(const char *name)
 
 #if OPT_SHELL
 
-	for (int i = 0; i < OPEN_MAX; i++) {
-		proc->fileTable[i] = NULL;
-	}
+	/**
+	 * @brief Zeroing out the block of memory used by the process fileTable (i.e.
+	 * 		  initializing the struct).
+	 */
+	bzero(proc->fileTable, OPEN_MAX * sizeof(struct openfile*));
 
 	/* Add to the process table */
 	pid_t pid = find_valid_pid();
@@ -334,6 +338,55 @@ proc_bootstrap(void)
 #endif
 }
 
+#if OPT_SHELL
+
+int proc_init_std_fds(struct proc *proc)
+{
+    struct vnode *vn;
+    int result;
+
+    /* Open "con:" for standard input (stdin) */
+    result = vfs_open((char *)"con:", O_RDONLY, 0, &vn);
+
+    if (result) {
+        return result;
+    }
+    proc->fileTable[STDIN_FILENO] = kmalloc(sizeof(struct openfile));
+    proc->fileTable[STDIN_FILENO]->vn = vn;
+    proc->fileTable[STDIN_FILENO]->offset = 0;
+    proc->fileTable[STDIN_FILENO]->mode = O_RDONLY;
+    proc->fileTable[STDIN_FILENO]->lock = lock_create("stdin_lock");
+
+    /* Open "con:" for standard output (stdout) */
+    result = vfs_open((char *)"con:", O_WRONLY, 0, &vn);
+    if (result) {
+        kfree(proc->fileTable[STDIN_FILENO]);
+        return result;
+    }
+    proc->fileTable[STDOUT_FILENO] = kmalloc(sizeof(struct openfile));
+    proc->fileTable[STDOUT_FILENO]->vn = vn;
+    proc->fileTable[STDOUT_FILENO]->offset = 0;
+    proc->fileTable[STDOUT_FILENO]->mode = O_WRONLY;
+    proc->fileTable[STDOUT_FILENO]->lock = lock_create("stdout_lock");
+
+    /* Open "con:" for standard error (stderr) */
+    result = vfs_open((char *)"con:", O_WRONLY, 0, &vn);
+    if (result) {
+        kfree(proc->fileTable[STDIN_FILENO]);
+        kfree(proc->fileTable[STDOUT_FILENO]);
+        return result;
+    }
+    proc->fileTable[STDERR_FILENO] = kmalloc(sizeof(struct openfile));
+    proc->fileTable[STDERR_FILENO]->vn = vn;
+    proc->fileTable[STDERR_FILENO]->offset = 0;
+    proc->fileTable[STDERR_FILENO]->mode = O_WRONLY;
+    proc->fileTable[STDERR_FILENO]->lock = lock_create("stderr_lock");
+
+    return 0;  /* Success */
+}
+
+#endif
+
 /*
  * Create a fresh proc for use by runprogram.
  *
@@ -355,6 +408,12 @@ proc_create_runprogram(const char *name)
 	newproc->p_addrspace = NULL;
 
 	/* VFS fields */
+
+	/* Initialize standard file descriptors (stdin, stdout, stderr) */
+    if (proc_init_std_fds(newproc) != 0) {
+        proc_destroy(newproc);
+        return NULL;
+    }
 
 	/*
 	 * Lock the current process to copy its current directory.

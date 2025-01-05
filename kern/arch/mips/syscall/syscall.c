@@ -111,20 +111,16 @@ syscall(struct trapframe *tf)
 	    /* Add stuff here */
 #if OPT_SHELL
 	    case SYS_write:
-	        retval = sys_write((int)tf->tf_a0,
+	        err = sys_write((int)tf->tf_a0,
 				(userptr_t)tf->tf_a1,
-				(size_t)tf->tf_a2);
-			/* error: function not implemented */
-            if (retval<0) err = ENOSYS; 
-			else err = 0;
+				(size_t)tf->tf_a2,
+				&retval);
         break;
 	    case SYS_read:
-	        retval = sys_read((int)tf->tf_a0,
+	        err = sys_read((int)tf->tf_a0,
 				(userptr_t)tf->tf_a1,
-				(size_t)tf->tf_a2);
-			/* error: function not implemented */
-            if (retval<0) err = ENOSYS; 
-			else err = 0;
+				(size_t)tf->tf_a2,
+				&retval);
         break;
 	    case SYS__exit:
     		sys__exit((int)tf->tf_a0);

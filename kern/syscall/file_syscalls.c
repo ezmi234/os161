@@ -245,45 +245,199 @@ off_t sys_lseek(int fd, off_t offset, int whence)
 /*
  * simple file system calls for write/read
  */
-int sys_write(int fd, userptr_t buf_ptr, size_t size)
-{
-  int i;
-  char *p = (char *)buf_ptr;
+// int sys_write(int fd, userptr_t buf_ptr, size_t size)
+// {
+//   int i;
+//   char *p = (char *)buf_ptr;
 
-  if (fd != STDOUT_FILENO && fd != STDERR_FILENO)
-  {
-    kprintf("sys_write supported only to stdout\n");
-    return -1;
-  }
+//   if (fd != STDOUT_FILENO && fd != STDERR_FILENO)
+//   {
+//     kprintf("sys_write supported only to stdout\n");
+//     return -1;
+//   }
 
-  for (i = 0; i < (int)size; i++)
-  {
-    putch(p[i]);
-  }
+//   for (i = 0; i < (int)size; i++)
+//   {
+//     putch(p[i]);
+//   }
 
-  return (int)size;
+//   return (int)size;
+// }
+
+ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval) {
+    /* CHECKING FILE DESCRIPTOR */
+    if (fd < 0 || fd >= OPEN_MAX) {     
+        return EBADF;  // Invalid file descriptor
+    }
+
+    struct openfile *file_entry;
+
+    /* Handle writes to stdout (fd = 1) and stderr (fd = 2) */
+    if (fd == 1 || fd == 2) {
+        if (curproc->fileTable[fd] == NULL) {  // Ensure stdout/stderr is initialized
+            return EBADF;
+        }
+        file_entry = curproc->fileTable[fd];  // Use the existing stdout/stderr entry
+    } else {
+        file_entry = curproc->fileTable[fd];  // Get the entry for a normal file
+        if (file_entry == NULL) {
+            return EBADF;
+        }
+    }
+
+    /* COPYING BUFFER TO KERNEL SIDE */
+    char *kbuffer = (char *)kmalloc(buflen);
+    if (kbuffer == NULL) {
+        return ENOMEM;
+    }
+    if (copyin((const_userptr_t)buf, kbuffer, buflen)) {
+        kfree(kbuffer);
+        return EFAULT;
+    }
+
+    /* PERFORM WRITING */
+    struct iovec iov;
+    struct uio uio_write;
+    struct vnode *vn = file_entry->vn;
+
+    if (vn == NULL) {
+        kfree(kbuffer);
+        return EIO;
+    }
+
+    lock_acquire(file_entry->lock);
+    uio_kinit(&iov, &uio_write, kbuffer, buflen, file_entry->offset, UIO_WRITE);
+    int error = VOP_WRITE(vn, &uio_write);
+    if (error) {
+        kfree(kbuffer);
+        lock_release(file_entry->lock);
+        return error;
+    }
+
+    /* UPDATE OFFSET */
+    off_t bytes_written = buflen - uio_write.uio_resid;
+    *retval = (int32_t)bytes_written;
+    file_entry->offset = uio_write.uio_offset;
+
+    /* CLEANUP */
+    lock_release(file_entry->lock);
+    kfree(kbuffer);
+
+    return 0;
 }
 
-int sys_read(int fd, userptr_t buf_ptr, size_t size)
-{
-  int i;
-  char *p = (char *)buf_ptr;
 
-  if (fd != STDIN_FILENO)
-  {
-    kprintf("sys_read supported only to stdin\n");
-    return -1;
-  }
 
-  for (i = 0; i < (int)size; i++)
-  {
-    p[i] = getch();
-    if (p[i] < 0)
-      return i;
-  }
+// int sys_read(int fd, userptr_t buf_ptr, size_t size)
+// {
+//   int i;
+//   char *p = (char *)buf_ptr;
 
-  return (int)size;
+//   if (fd != STDIN_FILENO)
+//   {
+//     kprintf("sys_read supported only to stdin\n");
+//     return -1;
+//   }
+
+//   for (i = 0; i < (int)size; i++)
+//   {
+//     p[i] = getch();
+//     if (p[i] < 0)
+//       return i;
+//   }
+
+//   return (int)size;
+// }
+
+ssize_t sys_read(int fd, userptr_t buf, size_t buflen, int32_t *retval) {
+    struct openfile *of;
+    struct iovec iov;
+    struct uio kuio;
+    struct vnode *vn;
+    int err;
+
+    /* Validate File Descriptor */
+    if (fd < 0 || fd >= OPEN_MAX) {                                
+        return EBADF;  /* Invalid file descriptor */
+    }
+
+    if (curproc == NULL || curproc->fileTable == NULL) {
+        return EFAULT;  /* curproc should not be NULL */
+    }
+
+    if (curproc->fileTable[fd] == NULL) {                    
+        return EBADF;  /* File descriptor is not in use */
+    }
+
+    if (curproc->fileTable[fd]->mode == O_WRONLY) {    
+        return EBADF;  /* File is not open for reading */
+    }
+
+    if (buf == NULL) {
+        return EFAULT;  /* Invalid user buffer pointer */
+    }
+
+    of = curproc->fileTable[fd];
+
+    /* Handle Reading from STDIN */
+    if (fd == STDIN_FILENO) {
+        char ch;
+        kgets(&ch, 1);  /* Read a single character from stdin */
+        if (ch < 0) {
+            return EIO;  /* Input error */
+        }
+        err = copyout(&ch, buf, 1);
+        if (err) {
+            return EFAULT;  /* Copy to user space failed */
+        }
+        *retval = 1;
+        return 0;
+    }
+
+    /* Allocate Kernel Buffer */
+    char *kbuffer = (char *) kmalloc(buflen);
+    if (kbuffer == NULL) {
+        return ENOMEM;  /* Memory allocation failed */
+    }
+
+    /* Retrieve File Object */
+    vn = of->vn;
+
+    /* Acquire File Lock */
+    lock_acquire(of->lock);
+
+    /* Initialize UIO for Kernel Buffer */
+    uio_kinit(&iov, &kuio, kbuffer, buflen, of->offset, UIO_READ);
+
+    /* Perform Read Operation */
+    err = VOP_READ(vn, &kuio);
+    if (err) {
+        kfree(kbuffer);
+        lock_release(of->lock);
+        return err;  /* Error during file read */
+    }
+
+    /* Update File Offset */
+    of->offset = kuio.uio_offset;
+
+    /* Set Return Value (Bytes Read) */
+    *retval = buflen - kuio.uio_resid;
+
+    /* Validate Copy to User Space */
+    err = copyout(kbuffer, buf, *retval);
+    if (err) {
+        kfree(kbuffer);
+        lock_release(of->lock);
+        return EFAULT;  /* Copying to user space failed */
+    }
+
+    /* Release Lock and Free Buffer */
+    lock_release(of->lock);
+    kfree(kbuffer);
+
+    return 0;
 }
+
 
 #endif
 #if OPT_SHELL
