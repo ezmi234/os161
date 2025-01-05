@@ -64,7 +64,7 @@ int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 #if OPT_SHELL
 
 int sys_write(int fd, userptr_t buf_ptr, size_t size);
-int sys_read(int fd, userptr_t buf_ptr, size_t size);
+ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval);
 int sys_open(const char *pathname, int flags, mode_t mode, int *retval);
 int sys_close(int fd);
 off_t sys_lseek(int fd, off_t offset, int whence);
@@ -72,6 +72,7 @@ void sys__exit(int exitcode);
 int sys_dup2(int oldf, int newfd);
 int sys_chdir(const char *path);
 char *sys_getcwd(char buf[], size_t size);
+int sys_remove(const char *pathname);
 pid_t sys_getpid(void);
 int sys_waitpid(pid_t pid, int *status, int options, int *retval);
 int sys_fork(struct trapframe *tf, pid_t *retval);
