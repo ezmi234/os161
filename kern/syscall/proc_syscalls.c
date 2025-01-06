@@ -222,15 +222,13 @@ int sys_execv(const char *program, char **args) {
     char *kernel_progname = NULL;
     int argc = 0, result;
 
-    /* Step 1: Validate inputs */
     if (program == NULL || args == NULL) {
-        return EFAULT;  // Null pointer
+        return EFAULT;
     }
 
-    /* Copy program name from user space to kernel space */
     kernel_progname = kmalloc(PATH_MAX);
     if (kernel_progname == NULL) {
-        return ENOMEM;  // Out of memory
+        return ENOMEM;
     }
     result = copyinstr((userptr_t)program, kernel_progname, PATH_MAX, NULL);
     if (result) {
@@ -238,9 +236,16 @@ int sys_execv(const char *program, char **args) {
         return result;
     }
 
-    /* Count arguments and copy them to kernel space */
-    for (argc = 0; args[argc] != NULL; argc++) {
-        // Count the number of arguments
+    /* 🚀 Fix: Validate argument list pointers */
+    while (1) {
+        char *arg_ptr;
+        result = copyin((const_userptr_t)(&args[argc]), &arg_ptr, sizeof(char *));
+        if (result) {
+            kfree(kernel_progname);
+            return EFAULT;
+        }
+        if (arg_ptr == NULL) break;  /* Stop at NULL terminator */
+        argc++;
     }
 
     kernel_args = kmalloc((argc + 1) * sizeof(char *));
@@ -250,64 +255,59 @@ int sys_execv(const char *program, char **args) {
     }
 
     for (int i = 0; i < argc; i++) {
+        char *arg_ptr;
+        result = copyin((const_userptr_t)(&args[i]), &arg_ptr, sizeof(char *));
+        if (result) {
+            for (int j = 0; j < i; j++) kfree(kernel_args[j]);
+            kfree(kernel_args);
+            kfree(kernel_progname);
+            return EFAULT;
+        }
+
         kernel_args[i] = kmalloc(ARG_MAX);
         if (kernel_args[i] == NULL) {
-            for (int j = 0; j < i; j++) {
-                kfree(kernel_args[j]);
-            }
+            for (int j = 0; j < i; j++) kfree(kernel_args[j]);
             kfree(kernel_args);
             kfree(kernel_progname);
             return ENOMEM;
         }
-        result = copyinstr((userptr_t)args[i], kernel_args[i], ARG_MAX, NULL);
+        result = copyinstr((userptr_t)arg_ptr, kernel_args[i], ARG_MAX, NULL);
         if (result) {
-            for (int j = 0; j <= i; j++) {
-                kfree(kernel_args[j]);
-            }
+            for (int j = 0; j <= i; j++) kfree(kernel_args[j]);
             kfree(kernel_args);
             kfree(kernel_progname);
             return result;
         }
     }
-    kernel_args[argc] = NULL;  // Null-terminate the array
+    kernel_args[argc] = NULL;
 
-    /* Step 2: Open the program file */
     result = vfs_open(kernel_progname, O_RDONLY, 0, &v);
     if (result) {
-        for (int i = 0; i < argc; i++) {
-            kfree(kernel_args[i]);
-        }
+        for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
         kfree(kernel_args);
         kfree(kernel_progname);
         return result;
     }
 
-    /* Step 3: Create a new address space */
     new_as = as_create();
     if (new_as == NULL) {
         vfs_close(v);
-        for (int i = 0; i < argc; i++) {
-            kfree(kernel_args[i]);
-        }
+        for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
         kfree(kernel_args);
         kfree(kernel_progname);
         return ENOMEM;
     }
 
-    /* Switch to the new address space */
     old_as = proc_setas(new_as);
     as_activate();
 
-    /* Step 4: Load the executable */
     result = load_elf(v, &entrypoint);
     if (result) {
         as_destroy(new_as);
         proc_setas(old_as);
         as_activate();
         vfs_close(v);
-        for (int i = 0; i < argc; i++) {
-            kfree(kernel_args[i]);
-        }
+        for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
         kfree(kernel_args);
         kfree(kernel_progname);
         return result;
@@ -315,33 +315,27 @@ int sys_execv(const char *program, char **args) {
 
     vfs_close(v);
 
-    /* Define the user stack in the new address space */
     result = as_define_stack(new_as, &stackptr);
     if (result) {
         as_destroy(new_as);
         proc_setas(old_as);
         as_activate();
-        for (int i = 0; i < argc; i++) {
-            kfree(kernel_args[i]);
-        }
+        for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
         kfree(kernel_args);
         kfree(kernel_progname);
         return result;
     }
 
-    /* Step 5: Copy arguments to the user stack */
     vaddr_t arg_ptrs[argc + 1];
     for (int i = argc - 1; i >= 0; i--) {
         size_t len = strlen(kernel_args[i]) + 1;
-        stackptr -= ROUNDUP(len, 8);  // Align to 8 bytes
+        stackptr -= ROUNDUP(len, 8);
         result = copyoutstr(kernel_args[i], (userptr_t)stackptr, len, NULL);
         if (result) {
             as_destroy(new_as);
             proc_setas(old_as);
             as_activate();
-            for (int i = 0; i < argc; i++) {
-                kfree(kernel_args[i]);
-            }
+            for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
             kfree(kernel_args);
             kfree(kernel_progname);
             return result;
@@ -350,32 +344,24 @@ int sys_execv(const char *program, char **args) {
     }
     arg_ptrs[argc] = 0;
 
-    /* Copy the argument pointers to the stack */
     stackptr -= ROUNDUP((argc + 1) * sizeof(vaddr_t), 8);
     result = copyout(arg_ptrs, (userptr_t)stackptr, (argc + 1) * sizeof(vaddr_t));
     if (result) {
         as_destroy(new_as);
         proc_setas(old_as);
         as_activate();
-        for (int i = 0; i < argc; i++) {
-            kfree(kernel_args[i]);
-        }
+        for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
         kfree(kernel_args);
         kfree(kernel_progname);
         return result;
     }
 
-    /* Clean up kernel memory */
-    for (int i = 0; i < argc; i++) {
-        kfree(kernel_args[i]);
-    }
+    for (int i = 0; i < argc; i++) kfree(kernel_args[i]);
     kfree(kernel_args);
     kfree(kernel_progname);
 
-    /* Step 6: Enter user mode */
-    enter_new_process(argc, (userptr_t)stackptr, NULL /*uenv*/, stackptr, entrypoint);
+    enter_new_process(argc, (userptr_t)stackptr, NULL, stackptr, entrypoint);
 
-    /* enter_new_process does not return */
     panic("enter_new_process returned unexpectedly!");
     return EINVAL;
 }
