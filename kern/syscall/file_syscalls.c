@@ -468,16 +468,16 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
 
     return 0; /* Success */
 }
-
 #endif
+
 #if OPT_SHELL
-int sys_dup2(int oldfd, int newfd)
+int
+sys_dup2(int oldfd, int newfd, int32_t *retval)
 {
-    // preliminary checks
-    if (oldfd < 0 || oldfd > OPEN_MAX || newfd < 0 || newfd > OPEN_MAX)
-    {
-        return EBADF;
-    }
+  // preliminary checks
+  if (oldfd < 0 || oldfd >= OPEN_MAX || newfd < 0 || newfd >= OPEN_MAX) {
+    return EBADF;
+  }
 
     if (curproc->fileTable[oldfd] == NULL)
     {
@@ -490,16 +490,26 @@ int sys_dup2(int oldfd, int newfd)
         return newfd;
     }
 
-    // special case: newfd is already open
-    if (curproc->fileTable[newfd] != NULL)
-    {
-        // sys_close
-        return -1;
+  // special case: newfd is already open
+  if (curproc->fileTable[newfd] != NULL) {
+    struct openfile *of = curproc->fileTable[newfd];
+    lock_acquire(of->lock);
+    curproc->fileTable[newfd] = NULL;
+    if (--of->count == 0) {
+      struct vnode *vn = of->vn;
+      of->vn = NULL;
+      vfs_close(vn);
     }
+    lock_release(of->lock);
+  }
 
-    curproc->fileTable[newfd] = curproc->fileTable[oldfd];
-    curproc->fileTable[newfd]->count++;
-    return newfd;
+  lock_acquire(curproc->fileTable[oldfd]->lock);
+  curproc->fileTable[newfd] = curproc->fileTable[oldfd];
+  curproc->fileTable[newfd]->count++;
+  lock_release(curproc->fileTable[oldfd]->lock);
+
+  *retval = newfd;
+  return 0;
 }
 #endif
 
@@ -535,28 +545,29 @@ int sys_chdir(const char *path)
 #endif
 
 #if OPT_SHELL
-char *
-sys_getcwd(char buf[], size_t size)
+int
+sys_getcwd(char buf[], size_t size, int32_t *retlen)
 {
-    if (buf == NULL || size == 0)
-    {
-        // errno = EINVAL;
-        return NULL;
-    }
+  if (size == 0) {
+    return EINVAL;
+  }
 
-    struct iovec iovec_buf;
-    struct uio cwd_uio;
+  int result = copyin((const_userptr_t)buf, buf, 1);
+  if (result) {
+      return result;
+  }
 
-    uio_kinit(&iovec_buf, &cwd_uio, (userptr_t)buf, size, 0, UIO_READ);
+  struct iovec iovec_buf;
+  struct uio cwd_uio;
+  uio_kinit(&iovec_buf, &cwd_uio, (userptr_t)buf, size, 0, UIO_READ);
 
-    int result = vfs_getcwd(&cwd_uio);
-    if (result)
-    {
-        // errno = result;
-        return NULL;
-    }
+  result = vfs_getcwd(&cwd_uio);
+  if (result) {
+    return result;
+  }
 
-    return buf;
+  *retlen = size - cwd_uio.uio_resid;
+  return 0;
 }
 #endif
 

@@ -140,32 +140,26 @@ void syscall(struct trapframe *tf)
 		break;
 	}
 
-	case SYS__exit:
-		sys__exit((int)tf->tf_a0);
-		err = 0;
-		break;
-	case SYS_dup2:
-		err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1);
-		break;
-	case SYS_chdir:
-		err = sys_chdir((const char *)tf->tf_a0);
-		break;
-	case SYS___getcwd:
-	{
-		char *result;
-		result = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1);
-		// if (result == NULL) retval = -1;
-		if (result == NULL)
-			err = -1;
-		break;
-	}
-	case SYS_getpid:
-		retval = sys_getpid();
-		err = 0;
-		break;
-	case SYS_fork:
-		err = sys_fork(tf, &retval);
-		break;
+        case SYS__exit:
+            sys__exit((int)tf->tf_a0);
+            err = 0;
+            break;
+        case SYS_dup2:
+            err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+            break;
+        case SYS_chdir:
+            err = sys_chdir((const char *)tf->tf_a0);
+            break;
+		case SYS___getcwd:
+			err = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+		    break;
+		case SYS_getpid:
+			retval = sys_getpid();
+			err = 0;
+		    break;
+        case SYS_fork:
+            err = sys_fork(tf, &retval);
+            break;
 	case SYS_waitpid:
 		err = sys_waitpid((pid_t)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval);
 		break;
