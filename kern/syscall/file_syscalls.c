@@ -479,16 +479,15 @@ sys_dup2(int oldfd, int newfd, int32_t *retval)
     return EBADF;
   }
 
-    if (curproc->fileTable[oldfd] == NULL)
-    {
-        return EBADF;
-    }
+  if (curproc->fileTable[oldfd] == NULL) {
+      return EBADF;
+  }
 
-    // special case: oldfd = newfd
-    if (oldfd == newfd)
-    {
-        return newfd;
-    }
+  // special case: oldfd = newfd
+  if (oldfd == newfd) {
+    *retval = newfd;
+    return 0;
+  }
 
   // special case: newfd is already open
   if (curproc->fileTable[newfd] != NULL) {
@@ -509,6 +508,15 @@ sys_dup2(int oldfd, int newfd, int32_t *retval)
   lock_release(curproc->fileTable[oldfd]->lock);
 
   *retval = newfd;
+  return 0;
+}
+#endif
+
+#if OPT_SHELL
+int sys_fstat(int fildes, struct stat *buf) {
+  (void)fildes;
+  (void)buf;
+
   return 0;
 }
 #endif

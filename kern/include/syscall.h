@@ -32,6 +32,7 @@
 
 
 #include <cdefs.h> /* for __DEAD */
+#include <stat.h>
 #include "opt-shell.h"
 struct trapframe; /* from <machine/trapframe.h> */
 
@@ -69,6 +70,7 @@ int sys_close(int fd);
 int sys_lseek(int fd, off_t offset, int whence, int32_t *retval_low32, int32_t *retval_upp32);
 void sys__exit(int exitcode);
 int sys_dup2(int oldf, int newfd, int32_t *retval);
+int sys_fstat(int fildes, struct stat *buf);
 int sys_chdir(const char *path);
 int sys_remove(const char *pathname);
 int sys_getcwd(char buf[], size_t size, int32_t *retval);

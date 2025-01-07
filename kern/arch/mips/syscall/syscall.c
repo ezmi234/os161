@@ -31,6 +31,7 @@
 #include <kern/errno.h>
 #include <kern/syscall.h>
 #include <lib.h>
+#include <stat.h>
 #include <mips/trapframe.h>
 #include <current.h>
 #include <syscall.h>
@@ -140,26 +141,29 @@ void syscall(struct trapframe *tf)
 		break;
 	}
 
-        case SYS__exit:
-            sys__exit((int)tf->tf_a0);
-            err = 0;
-            break;
-        case SYS_dup2:
-            err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
-            break;
-        case SYS_chdir:
-            err = sys_chdir((const char *)tf->tf_a0);
-            break;
-		case SYS___getcwd:
-			err = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1, &retval);
-		    break;
-		case SYS_getpid:
-			retval = sys_getpid();
-			err = 0;
-		    break;
-        case SYS_fork:
-            err = sys_fork(tf, &retval);
-            break;
+	case SYS__exit:
+		sys__exit((int)tf->tf_a0);
+		err = 0;
+		break;
+	case SYS_dup2:
+		err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+		break;
+	case SYS_fstat:
+		err = sys_fstat((int)tf->tf_a0, (struct stat *)tf->tf_a1);
+		break;
+	case SYS_chdir:
+		err = sys_chdir((const char *)tf->tf_a0);
+		break;
+	case SYS___getcwd:
+		err = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+		break;
+	case SYS_getpid:
+		retval = sys_getpid();
+		err = 0;
+		break;
+	case SYS_fork:
+		err = sys_fork(tf, &retval);
+		break;
 	case SYS_waitpid:
 		err = sys_waitpid((pid_t)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval);
 		break;
