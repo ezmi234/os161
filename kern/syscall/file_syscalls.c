@@ -289,65 +289,68 @@ int sys_close(int fd)
     lock_release(of->lock);
     return 0;
 }
-
 int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *retval_upp32) {
-    struct openfile *of;
-    struct vnode *vn;
-    struct stat file_stat;
-    off_t new_offset;
+
+    off_t retval = -1;
+
+    KASSERT(curproc != NULL);
 
     if (fd < 0 || fd >= OPEN_MAX) {
-        return EBADF;
-    }
-    if (curproc == NULL || curproc->fileTable == NULL) {
-        return EFAULT;
-    }
-    of = curproc->fileTable[fd];
-    if (of == NULL) {
-        return EBADF;
+        return EBADF;   
+    } else if (curproc->fileTable[fd] == NULL) {
+        return EBADF;   
     }
 
-    vn = of->vn;
-    if (vn == NULL || !VOP_ISSEEKABLE(vn)) {
-        return ESPIPE;
+    if (!VOP_ISSEEKABLE(curproc->fileTable[fd]->vn)) {
+        return ESPIPE;  
     }
 
-    if (fd == STDIN_FILENO) {
-        return ESPIPE;
-    }
-
+    struct openfile *of = curproc->fileTable[fd];
+    int err;
+    struct stat info;
     lock_acquire(of->lock);
-
-    if (VOP_STAT(vn, &file_stat) != 0) {
-        lock_release(of->lock);
-        return EINVAL;
-    }
-
+    retval = of->offset;
     switch (whence) {
         case SEEK_SET:
-            new_offset = pos;
-            break;
+            if (pos < 0) {
+                lock_release(of->lock);
+                return EINVAL;
+            }
+            retval = pos;
+        break;
+
         case SEEK_CUR:
-            new_offset = of->offset + pos;
-            break;
+            if (pos < 0 && -pos > of->offset) {
+                lock_release(of->lock);
+                return EINVAL;
+            }
+            retval = of->offset + pos;
+        break;
+        
         case SEEK_END:
-            new_offset = file_stat.st_size + pos;
-            break;
+            err = VOP_STAT(of->vn, &info);
+            if (err) {
+                lock_release(of->lock);
+                return err;
+            }
+            if (pos < 0 && -pos > info.st_size) {
+                lock_release(of->lock);
+                return EINVAL;
+            }
+            retval = info.st_size - pos;
+        break;
+
         default:
             lock_release(of->lock);
             return EINVAL;
     }
 
-    if (new_offset < 0) {
-        lock_release(of->lock);
-        return EINVAL;
-    }
-
-    of->offset = new_offset;
-    *retval_low32 = (int32_t)(new_offset & 0xFFFFFFFF);
-    *retval_upp32 = (int32_t)((new_offset >> 32) & 0xFFFFFFFF);
-
+    of->offset = retval;
     lock_release(of->lock);
+
+    *retval_low32 = (int32_t) (retval >> 32);                 
+    *retval_upp32 = (int32_t) (retval & 0x00000000ffffffff);   
+
     return 0;
 }
 

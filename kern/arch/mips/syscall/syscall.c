@@ -136,8 +136,9 @@ void syscall(struct trapframe *tf)
 			(int)tf->tf_a0,
 			pos,
 			*(int32_t *)(tf->tf_sp + 16),
-			&retval_low32,
-			&retval_upp32);
+			(int32_t *) &retval_low32,
+			(int32_t *) &retval_upp32
+		);
 		break;
 	}
 
