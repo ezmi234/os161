@@ -38,6 +38,7 @@
 #include <mips/tlb.h>
 #include <addrspace.h>
 #include <vm.h>
+#include "opt-shell.h"
 
 /*
  * Dumb MIPS-only "VM system" that is intended to only be just barely
@@ -59,11 +60,15 @@
 /* (this must be > 64K so argument blocks of size ARG_MAX will fit) */
 #define DUMBVM_STACKPAGES    18
 
+#if OPT_SHELL
+
 /* G.Cabodi: set DUMBVM_WITH_FREE
  *  - 0: original dumbvm
  *  - 1: support for alloc/free
  */
 #define DUMBVM_WITH_FREE 1
+
+#endif
 
 /*
  * Wrap ram_stealmem in a spinlock.
@@ -247,7 +252,7 @@ void free_kpages(vaddr_t addr) {
 
         unsigned long size = allocSize[frame];
         if (size == 0) {
-            // kprintf("free_kpages: Attempt to free unallocated memory\n");
+            /* kprintf("free_kpages: Attempt to free unallocated memory\n"); */
             return;
         }
 
