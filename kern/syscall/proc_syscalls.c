@@ -50,11 +50,19 @@ void sys__exit(int exitcode) {
 }
 
 #if OPT_SHELL
+/**
+ * getpid system call allows to retrieve the process ID (PID) of the calling process
+ * 
+ * @return: the PID of the calling process
+ */
 pid_t sys_getpid() {
+  // retrieve the process ID of the current process
   pid_t result = curproc->p_pid;
   return result;
 }
+#endif
 
+#if OPT_SHELL
 /*
  * sys_waitpid - Waits for a child process to terminate.
  */
