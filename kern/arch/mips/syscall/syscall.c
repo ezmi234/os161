@@ -101,90 +101,106 @@ void syscall(struct trapframe *tf)
 
 	switch (callno)
 	{
-	case SYS_reboot:
-		err = sys_reboot(tf->tf_a0);
-		break;
+		case SYS_reboot:
+			err = sys_reboot(tf->tf_a0);
+			break;
 
-	case SYS___time:
-		err = sys___time((userptr_t)tf->tf_a0,
-						 (userptr_t)tf->tf_a1);
-		break;
+		case SYS___time:
+			err = sys___time((userptr_t)tf->tf_a0,
+							(userptr_t)tf->tf_a1);
+			break;
 
 		/* Add stuff here */
 #if OPT_SHELL
-	case SYS_write:
-		err = sys_write((int)tf->tf_a0,
-						(userptr_t)tf->tf_a1,
-						(size_t)tf->tf_a2,
-						&retval);
-		break;
-	case SYS_read:
-		err = sys_read(
-			(int)tf->tf_a0,
-			(void *)tf->tf_a1,
-			(size_t)tf->tf_a2,
-			&retval);
-		break;
-	case SYS_lseek:
-	{
-		pos = tf->tf_a2;
-		pos <<= 32;
-		pos |= tf->tf_a3;
+		/* File system syscalls */
+		case SYS_open:
+			err = sys_open((const char *)tf->tf_a0, (int)tf->tf_a1, (mode_t)tf->tf_a2, &retval);
+			break;
+			
+		case SYS_read:
+			err = sys_read(
+				(int)tf->tf_a0,
+				(void *)tf->tf_a1,
+				(size_t)tf->tf_a2,
+				&retval);
+			break;
 
-		err = sys_lseek(
-			(int)tf->tf_a0,
-			pos,
-			*(int32_t *)(tf->tf_sp + 16),
-			(int32_t *) &retval,
-			(int32_t *) &retval_upp32
-		);
-		break;
-	}
+		case SYS_write:
+			err = sys_write((int)tf->tf_a0,
+							(userptr_t)tf->tf_a1,
+							(size_t)tf->tf_a2,
+							&retval);
+			break;
 
-	case SYS__exit:
-		sys__exit((int)tf->tf_a0);
-		err = 0;
-		break;
-	case SYS_dup2:
-		err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
-		break;
-	case SYS_fstat:
-		err = sys_fstat((int)tf->tf_a0, (struct stat *)tf->tf_a1);
-		break;
-	case SYS_chdir:
-		err = sys_chdir((const char *)tf->tf_a0);
-		break;
-	case SYS___getcwd:
-		err = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1, &retval);
-		break;
-	case SYS_getpid:
-		retval = sys_getpid();
-		err = 0;
-		break;
-	case SYS_fork:
-		err = sys_fork(tf, &retval);
-		break;
-	case SYS_waitpid:
-		err = sys_waitpid((pid_t)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval);
-		break;
-	case SYS_execv:
-		err = sys_execv((const char *)tf->tf_a0, (char **)tf->tf_a1);
-		break;
-	case SYS_open:
-		err = sys_open((const char *)tf->tf_a0, (int)tf->tf_a1, (mode_t)tf->tf_a2, &retval);
-		break;
-	case SYS_close:
-		err = sys_close((int)tf->tf_a0);
-		break;
-	case SYS_remove:
-		err = sys_remove((const char *)tf->tf_a0);
-		break;
+		case SYS_lseek:
+			pos = tf->tf_a2;
+			pos <<= 32;
+			pos |= tf->tf_a3;
+
+			err = sys_lseek(
+				(int)tf->tf_a0,
+				pos,
+				*(int32_t *)(tf->tf_sp + 16),
+				(int32_t *) &retval,
+				(int32_t *) &retval_upp32
+			);
+			break;
+
+		case SYS_close:
+			err = sys_close((int)tf->tf_a0);
+			break;
+
+		case SYS_dup2:
+			err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+			break;
+
+		/* Directory syscalls */
+		case SYS_chdir:
+			err = sys_chdir((const char *)tf->tf_a0);
+			break;
+
+		case SYS___getcwd:
+			err = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+			break;
+
+		/* Process syscalls */
+		case SYS_getpid:
+			retval = sys_getpid();
+			err = 0;
+			break;
+
+		case SYS_fork:
+			err = sys_fork(tf, &retval);
+			break;
+
+		case SYS_execv:
+			err = sys_execv((const char *)tf->tf_a0, (char **)tf->tf_a1);
+			break;
+		
+		case SYS_waitpid:
+			err = sys_waitpid((pid_t)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval);
+			break;
+		
+		case SYS__exit:
+			sys__exit((int)tf->tf_a0);
+			err = 0;
+			break;
+
+	
+		/* Void syscalls added for testing purposes */
+		case SYS_fstat:
+			err = sys_fstat((int)tf->tf_a0, (struct stat *)tf->tf_a1);
+			break;
+
+		case SYS_remove:
+			err = sys_remove((const char *)tf->tf_a0);
+			break;
 #endif
 
-	default:
-		kprintf("Unknown syscall %d\n", callno);
-		err = ENOSYS;
-		break;
+		default:
+			kprintf("Unknown syscall %d\n", callno);
+			err = ENOSYS;
+			break;
 	}
 
 	if (err)
@@ -223,19 +239,19 @@ void syscall(struct trapframe *tf)
  */
 void enter_forked_process(void *data, unsigned long unused)
 {
-	(void)unused;
+	(void)unused; /* Unused variable */
 
 	struct trapframe tf = *(struct trapframe *)data;
 
-	kfree(data); // Free the allocated trapframe
+	kfree(data); /* Free the data */
 
 	/* Activate the new address space */
 	as_activate();
 
 	/* Modify the trapframe for the child */
-	tf.tf_v0 = 0;	// Return value is 0 for the child
-	tf.tf_a3 = 0;	// No error
-	tf.tf_epc += 4; // Advance the program counter
+	tf.tf_v0 = 0;	/* Return value for the child */
+	tf.tf_a3 = 0;	/* Signal no error */
+	tf.tf_epc += 4; /* Advance the program counter */
 
 	/* Enter user mode */
 	mips_usermode(&tf);

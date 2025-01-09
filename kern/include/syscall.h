@@ -61,23 +61,29 @@ __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
 int sys_reboot(int code);
 int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
 
-// System calls
 #if OPT_SHELL
-ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval);
-ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval);
+
+/* System calls for file system */
 int sys_open(const char *pathname, int flags, mode_t mode, int *retval);
-int sys_close(int fd);
+ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval);
+ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval);
 int sys_lseek(int fd, off_t offset, int whence, int32_t *retval_low32, int32_t *retval_upp32);
-void sys__exit(int exitcode);
+int sys_close(int fd);
 int sys_dup2(int oldf, int newfd, int32_t *retval);
-int sys_fstat(int fildes, struct stat *buf);
+
+/* System calls for directory system */
 int sys_chdir(const char *path);
-int sys_remove(const char *pathname);
 int sys_getcwd(char buf[], size_t size, int32_t *retval);
+
+/* System calls for process system */
 pid_t sys_getpid(void);
-int sys_waitpid(pid_t pid, int *status, int options, int *retval);
 int sys_fork(struct trapframe *tf, pid_t *retval);
 int sys_execv(const char *program, char **args);
+int sys_waitpid(pid_t pid, int *status, int options, int *retval);
+void sys__exit(int exitcode);
+int sys_fstat(int fildes, struct stat *buf);
+int sys_remove(const char *pathname);
+
 #endif
 
 #endif /* _SYSCALL_H_ */
