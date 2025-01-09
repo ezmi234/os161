@@ -26,30 +26,9 @@
 #include <kern/wait.h>
 #include <kern/limits.h>
 
-/*
- * sys_exit - Terminates the current process.
- */
-void sys__exit(int exitcode) {
-    struct proc *proc = curproc;
-
-    KASSERT(proc != NULL);
-
-    proc->p_exitcode = _MKWAIT_EXIT(exitcode);
-    proc->p_exited = true;
-    /* SIGNALLING THE TERMINATION OF THE PROCESS */
-    lock_acquire(proc->p_locklock);
-    cv_signal(proc->p_cv, proc->p_locklock);
-    lock_release(proc->p_locklock);
-
-    /* Clean up resources */
-    thread_exit();
-
-    /* WAIT! YOU SHOULD NOT HAPPEN TO BE HERE */
-    panic("[!] Wait! You should not be here. Some errors happened during thread_exit()...\n");
-
-}
 
 #if OPT_SHELL
+
 pid_t sys_getpid() {
   pid_t result = curproc->p_pid;
   return result;
@@ -139,20 +118,6 @@ int sys_waitpid(pid_t pid, int *status, int options, int *retval) {
     /* TASK COMPLETED SUCCESSFULLY */
     proc_destroy(proc);
     return 0;
-
-    // /* RETRIEVING EXIT STATUS */
-    // int exit_status = proc->p_exitcode;
-    // if (status != NULL) {
-    //     int result = copyout(&exit_status, (userptr_t)status, sizeof(int));
-    //     if (result) {
-    //         return result;  
-    //     }
-    // }
-
-    // /* TASK COMPLETED SUCCESSFULLY */
-    // *retval = pid;
-    // proc_destroy(proc);  // Clean up the process
-    // return 0;
 }
 
 /*
@@ -236,7 +201,7 @@ int sys_execv(const char *program, char **args) {
         return result;
     }
 
-    /* 🚀 Fix: Validate argument list pointers */
+    /* Validate argument list pointers */
     while (1) {
         char *arg_ptr;
         result = copyin((const_userptr_t)(&args[argc]), &arg_ptr, sizeof(char *));
@@ -365,4 +330,46 @@ int sys_execv(const char *program, char **args) {
     panic("enter_new_process returned unexpectedly!");
     return EINVAL;
 }
+
+
+/**
+ * sys__exit - Terminates the current process with the given exit code.
+ * @exitcode: The exit code to be set for the process.
+ *
+ * This function sets the exit code for the current process, signals that
+ * the process has exited, and then cleans up resources by calling
+ * thread_exit(). If the function returns, it indicates an error as
+ * thread_exit() should not return.
+ *
+ * Preconditions:
+ * - The current process (curproc) must not be NULL.
+ *
+ * Postconditions:
+ * - The process's exit code is set.
+ * - The process is marked as exited.
+ * - Other processes waiting on this process are signaled.
+ * - The current thread is terminated.
+ *
+ * If thread_exit() fails to terminate the thread, a panic is triggered.
+ */
+void sys__exit(int exitcode) {
+    struct proc *proc = curproc;
+
+    KASSERT(proc != NULL);
+
+    proc->p_exitcode = _MKWAIT_EXIT(exitcode);
+    proc->p_exited = true;
+    /* SIGNALLING THE TERMINATION OF THE PROCESS */
+    lock_acquire(proc->p_locklock);
+    cv_signal(proc->p_cv, proc->p_locklock);
+    lock_release(proc->p_locklock);
+
+    /* Clean up resources */
+    thread_exit();
+
+    /* WAIT! YOU SHOULD NOT HAPPEN TO BE HERE */
+    panic("[!] Wait! You should not be here. Some errors happened during thread_exit()...\n");
+
+}
+
 #endif
