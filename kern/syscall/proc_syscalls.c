@@ -1,10 +1,3 @@
-/*
- * AUthor: G.Cabodi
- * Very simple implementation of sys__exit.
- * It just avoids crash/panic. Full process exit still TODO
- * Address space is released
- */
-
 #include <types.h>
 #include <kern/unistd.h>
 #include <clock.h>
@@ -30,20 +23,39 @@
 #if OPT_SHELL
 
 /**
- * getpid system call allows to retrieve the process ID (PID) of the calling process
+ * sys_getpid - Retrieve the process ID of the current process.
  *
- * @return: the PID of the calling process
+ * This function returns the process ID (PID) of the currently executing process.
+ *
+ * Returns:
+ *   The PID of the current process.
  */
 pid_t sys_getpid() {
-  // retrieve the process ID of the current process
+  /* retrieve the process ID of the current process */
   pid_t result = curproc->p_pid;
   return result;
 }
-#endif
 
-#if OPT_SHELL
-/*
- * sys_waitpid - Waits for a child process to terminate.
+/**
+ * sys_waitpid - Wait for a specific child process to terminate.
+ *
+ * @pid: The process ID of the child process to wait for.
+ * @status: Pointer to an integer where the exit status of the child process will be stored.
+ * @options: Options for the waitpid call (e.g., WNOHANG for non-blocking wait).
+ * @retval: Pointer to an integer where the process ID of the terminated child process will be stored.
+ *
+ * This function suspends execution of the calling process until the child process specified by
+ * pid terminates, unless the WNOHANG option is specified. If the child process has already
+ * terminated, the function returns immediately. The exit status of the child process is stored
+ * in the location pointed to by status.
+ *
+ * Return:
+ *  - 0 on success.
+ *  - ECHILD if the specified process is not a child of the calling process or if the calling process
+ *    attempts to wait on itself.
+ *  - EFAULT if the status pointer is invalid or not word-aligned.
+ *  - EINVAL if the options argument is invalid.
+ *  - ESRCH if no process with the specified pid exists.
  */
 int sys_waitpid(pid_t pid, int *status, int options, int *retval) {
     /* SOME ASSERTIONS */
@@ -55,7 +67,7 @@ int sys_waitpid(pid_t pid, int *status, int options, int *retval) {
     } else if (status == NULL) {
         *retval = pid;
         return 0;
-    } 
+    }
     /* TEMPORARY */
     else if ((int)status == 0x40000000 || (unsigned int)status == 0x80000000) {
         return EFAULT;  /* Invalid memory address */
@@ -84,7 +96,7 @@ int sys_waitpid(pid_t pid, int *status, int options, int *retval) {
     /* CHECKING IF THE PROCESS IS A CHILD */
     if (proc->parent_pid != curproc->p_pid) {
         return ECHILD;  /* Not a child process */
-    }    
+    }
 
     if (proc->p_numthreads == 0) {
         *status = proc->p_exitcode;
@@ -128,8 +140,18 @@ int sys_waitpid(pid_t pid, int *status, int options, int *retval) {
     return 0;
 }
 
-/*
- * sys_fork - Create a new process as a copy of the current process.
+/**
+ * sys_fork - Create a new process by duplicating the calling process.
+ * @tf: The trapframe of the parent process.
+ * @retval: Pointer to store the PID of the child process.
+ *
+ * This function creates a new process that is a copy of the calling process.
+ *
+ * Return:
+ * 0 on success, or an error code on failure.
+ * Possible error codes:
+ * - ENOMEM: Out of memory.
+ * - Other error codes returned by as_copy or thread_fork.
  */
 int sys_fork(struct trapframe *tf, pid_t *retval) {
     struct proc *child_proc;
@@ -139,53 +161,67 @@ int sys_fork(struct trapframe *tf, pid_t *retval) {
     /* ASSERTING CURRENT PROCESS TO ACTUALLY EXIST */
     KASSERT(curproc != NULL);
 
-    /* Step 1: Create a new process */
+    /* Create a new process */
     child_proc = proc_create_runprogram(curproc->p_name);
     if (child_proc == NULL) {
         proc_destroy(child_proc);
-        return ENOMEM; // Out of memory
+        return ENOMEM;  /* Out of memory */
     }
 
-    /* Step 2: Copy the address space */
+    /* Copy the address space */
     result = as_copy(curproc->p_addrspace, &child_proc->p_addrspace);
     if (result) {
         proc_destroy(child_proc);
-        return result; // Address space copy failed
+        return result; /* Address space copy failed */
     }
 
-    /* Step 3: Copy the trapframe for the child */
+    /* Copy the trapframe for the child */
     child_tf = kmalloc(sizeof(struct trapframe));
     if (child_tf == NULL) {
         proc_destroy(child_proc);
-        return ENOMEM; // Out of memory
+        return ENOMEM; /* Out of memory */
     }
     *child_tf = *tf;
 
-    /* Step 4: Create a new thread for the child process */
+    /* Create a new thread for the child process */
     result = thread_fork(
-        curthread->t_name,         // Name of the thread
-        child_proc,                // New process
-        enter_forked_process,      // Entry function
-        (void *)child_tf,          // Argument for the new thread
-        0                          // Unused argument
+        curthread->t_name,         /* Name of the thread */
+        child_proc,                /* New process */
+        enter_forked_process,      /* Entry function */
+        (void *)child_tf,          /* Argument for the new thread */
+        0                          /* Unused argument */
     );
     if (result) {
         kfree(child_tf);
         proc_destroy(child_proc);
-        return result; // Thread creation failed
+        return result; /* Thread creation failed */
     }
 
     child_proc->parent_pid = curproc->p_pid;
 
-    /* Step 5: Return the child PID to the parent */
+    /* Return the child PID to the parent */
     *retval = child_proc->p_pid;
 
-    /* Step 6: Child process gets a return value of 0 */
+    /* Child process gets a return value of 0 */
     return 0;
 }
 
-/*
- * sys_execv - Load and execute a new program.
+/**
+ * sys_execv - Executes a program, replacing the current process.
+ * @program: The path to the program to execute.
+ * @args: The arguments to pass to the program.
+ *
+ * This function loads and executes a new program, replacing the current
+ * process image with a new one. The new program is specified by the
+ * @program parameter, and the arguments to the program are specified by
+ * the @args parameter.
+ *
+ * Return:
+ *  - On success, this function does not return.
+ *  - On failure, returns an appropriate error code:
+ *    - EFAULT: If @program or @args is an invalid pointer.
+ *    - ENOMEM: If there is insufficient memory to complete the operation.
+ *    - Other error codes as returned by lower-level functions.
  */
 int sys_execv(const char *program, char **args) {
     struct vnode *v;
@@ -338,7 +374,6 @@ int sys_execv(const char *program, char **args) {
     panic("enter_new_process returned unexpectedly!");
     return EINVAL;
 }
-
 
 /**
  * sys__exit - Terminates the current process with the given exit code.

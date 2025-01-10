@@ -19,8 +19,7 @@
 
 #if OPT_SHELL
 
-#define MAX_OPEN_FILES 128 // Define maximum open files per process
-
+#define MAX_OPEN_FILES 128      /* Define maximum open files per process */
 
 /**
  * sys_write - Write data to a file descriptor.
@@ -115,7 +114,6 @@ ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
     return 0;
 }
 
-
 /**
  * sys_open - System call to open a file.
  * @pathname: The path of the file to open.
@@ -154,7 +152,7 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
         return ENOMEM;
     }
     size_t len;
-    int err = copyinstr((const_userptr_t)pathname, kbuffer, PATH_MAX, &len); // may return EFAULT
+    int err = copyinstr((const_userptr_t)pathname, kbuffer, PATH_MAX, &len);    /* may return EFAULT */
     if (err)
     {
         kfree(kbuffer);
@@ -500,7 +498,7 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
         }
 
         /* COPY BUFFER TO USER SPACE */
-        err = copyout(kbuffer, (userptr_t)buf, i); // Keep buf as const void *
+        err = copyout(kbuffer, (userptr_t)buf, i);  /* Keep buf as const void * */
         kfree(kbuffer);
         if (err)
         {
@@ -548,7 +546,7 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
     *retval = buflen - kuio.uio_resid;
 
     /* COPY BUFFER TO USER SPACE */
-    err = copyout(kbuffer, (userptr_t)buf, *retval); // Keep buf as const void *
+    err = copyout(kbuffer, (userptr_t)buf, *retval);    /* Keep buf as const void * */
     kfree(kbuffer);
     lock_release(of->lock);
 
@@ -574,6 +572,48 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
  * the function does nothing and returns newfd. The function performs necessary
  * checks to ensure that the file descriptors are valid and that oldfd is open.
  */
+int
+sys_dup2(int oldfd, int newfd, int32_t *retval)
+{
+  /* check validity of oldfd and newfd */
+  if (oldfd < 0 || oldfd >= OPEN_MAX || newfd < 0 || newfd >= OPEN_MAX) {
+    return EBADF;
+  }
+
+  /* check if oldfd is open */
+  if (curproc->fileTable[oldfd] == NULL) {
+      return EBADF;
+  }
+
+  /* special case:if oldfd is the same as newfd, do nothing */
+  if (oldfd == newfd) {
+    *retval = newfd;
+    return 0;
+  }
+
+  /* special case: newfd is already open, close it before reusing it */
+  if (curproc->fileTable[newfd] != NULL) {
+    struct openfile *of = curproc->fileTable[newfd];
+    lock_acquire(of->lock);
+    curproc->fileTable[newfd] = NULL;
+    if (--of->count == 0) {
+      struct vnode *vn = of->vn;
+      of->vn = NULL;
+      vfs_close(vn);
+    }
+    lock_release(of->lock);
+  }
+
+  /* duplicate the fd: point newfd to the same file object as oldfd
+  increase the reference count for the file object */
+  lock_acquire(curproc->fileTable[oldfd]->lock);
+  curproc->fileTable[newfd] = curproc->fileTable[oldfd];
+  curproc->fileTable[newfd]->count++;
+  lock_release(curproc->fileTable[oldfd]->lock);
+
+  *retval = newfd;
+  return 0;
+}
 
 /**
  * sys_fstat - Retrieves the status of an open file.
@@ -587,48 +627,6 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
  * the status of the file associated with the file descriptor fildes and store it
  * in the stat structure pointed to by buf.
  */
-int
-sys_dup2(int oldfd, int newfd, int32_t *retval)
-{
-  // check validity of oldfd and newfd
-  if (oldfd < 0 || oldfd >= OPEN_MAX || newfd < 0 || newfd >= OPEN_MAX) {
-    return EBADF;
-  }
-
-  // check if oldfd is open
-  if (curproc->fileTable[oldfd] == NULL) {
-      return EBADF;
-  }
-
-  // special case:if oldfd is the same as newfd, do nothing
-  if (oldfd == newfd) {
-    *retval = newfd;
-    return 0;
-  }
-
-  // special case: newfd is already open, close it before reusing it
-  if (curproc->fileTable[newfd] != NULL) {
-    struct openfile *of = curproc->fileTable[newfd];
-    lock_acquire(of->lock);
-    curproc->fileTable[newfd] = NULL;
-    if (--of->count == 0) {
-      struct vnode *vn = of->vn;
-      of->vn = NULL;
-      vfs_close(vn);
-    }
-    lock_release(of->lock);
-  }
-
-  // duplicate the fd: point newfd to the same file object as oldfd
-  // increase the reference count for the file object
-  lock_acquire(curproc->fileTable[oldfd]->lock);
-  curproc->fileTable[newfd] = curproc->fileTable[oldfd];
-  curproc->fileTable[newfd]->count++;
-  lock_release(curproc->fileTable[oldfd]->lock);
-
-  *retval = newfd;
-  return 0;
-}
 int sys_fstat(int fildes, struct stat *buf) {
   (void)fildes;
   (void)buf;
@@ -653,7 +651,7 @@ int sys_fstat(int fildes, struct stat *buf) {
  */
 int sys_chdir(const char *path)
 {
-    // check if the path is NULL
+    /* check if the path is NULL */
     if (path == NULL)
     {
         return EFAULT;
@@ -662,27 +660,27 @@ int sys_chdir(const char *path)
     char kbuf[PATH_MAX];
     struct vnode *new_dir;
 
-    // copy the user-space string path into the kernel buffer
+    /* copy the user-space string path into the kernel buffer */
     int result = copyinstr((const_userptr_t)path, kbuf, sizeof(kbuf), NULL);
     if (result)
     {
         return result;
     }
 
-    // try to open the target directory specified by the path
+    /* try to open the target directory specified by the path */
     result = vfs_open(kbuf, O_RDONLY, 0, &new_dir);
     if (result)
     {
         return result;
     }
 
-    // if the process already has a current working directory, close it
+    /* if the process already has a current working directory, close it */
     if (curproc->p_cwd != NULL)
     {
         vfs_close(curproc->p_cwd);
     }
 
-    // update the current working directory
+    /* update the current working directory */
     curproc->p_cwd = new_dir;
     return 0;
 }
@@ -705,12 +703,12 @@ int sys_chdir(const char *path)
 int
 sys_getcwd(char buf[], size_t size, int32_t *retlen)
 {
-  // check if the size of the buffer is valid
+  /* check if the size of the buffer is valid */
   if (size == 0) {
     return EINVAL;
   }
 
-  // copy the buffer to kernel space to validate the address
+  /* copy the buffer to kernel space to validate the address */
   int result = copyin((const_userptr_t)buf, buf, 1);
   if (result) {
       return result;
@@ -719,16 +717,16 @@ sys_getcwd(char buf[], size_t size, int32_t *retlen)
   struct iovec iovec_buf;
   struct uio cwd_uio;
 
-  // initialize the uio structure for reading the current working directory
+  /* initialize the uio structure for reading the current working directory */
   uio_kinit(&iovec_buf, &cwd_uio, (userptr_t)buf, size, 0, UIO_READ);
 
-  // retrieve the current working directory
+  /* retrieve the current working directory */
   result = vfs_getcwd(&cwd_uio);
   if (result) {
     return result;
   }
 
-  // retrieve the length of the directory path
+  /* retrieve the length of the directory path */
   *retlen = size - cwd_uio.uio_resid;
   return 0;
 }
@@ -751,4 +749,5 @@ int sys_remove(const char *pathname)
     /* TASK COMPLETED SUCCESSFULLY */
     return 0;
 }
+
 #endif
