@@ -1,9 +1,3 @@
-/*
- * AUthor: G.Cabodi
- * Very simple implementation of sys_read and sys_write.
- * just works (partially) on stdin/stdout
- */
-
 #include <types.h>
 #include <kern/unistd.h>
 #include <kern/fcntl.h>
@@ -27,7 +21,26 @@
 
 #define MAX_OPEN_FILES 128 // Define maximum open files per process
 
-#if OPT_SHELL
+
+/**
+ * sys_write - Write data to a file descriptor.
+ *
+ * @fd: The file descriptor to write to.
+ * @buf: The buffer containing the data to write.
+ * @buflen: The number of bytes to write from the buffer.
+ * @retval: Pointer to store the number of bytes written.
+ *
+ * This function writes up to buflen bytes from the buffer pointed to by buf
+ * to the file referred to by the file descriptor fd. The number of bytes
+ * written is stored in the location pointed to by retval.
+ *
+ * Return:
+ *  - 0 on success.
+ *  - EBADF if fd is not a valid file descriptor or if the file is not open for writing.
+ *  - EFAULT if curproc or curproc->fileTable is NULL, or if buf is an invalid pointer.
+ *  - ENOMEM if there is insufficient memory to allocate the kernel buffer.
+ *  - Other error codes as returned by VOP_WRITE.
+ */
 ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
 {
 
@@ -102,9 +115,29 @@ ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
     return 0;
 }
 
-#endif
 
-/* Open a file */
+/**
+ * sys_open - System call to open a file.
+ * @pathname: The path of the file to open.
+ * @flags: Flags indicating the mode in which to open the file.
+ * @mode: The mode to use if a new file is created.
+ * @retval: Pointer to store the file descriptor of the opened file.
+ *
+ * This function performs the following steps:
+ * 1. Checks if the pathname is NULL and returns EFAULT if it is.
+ * 2. Copies the pathname from user space to kernel space to ensure security and prevent vfs_open from destroying the buffer.
+ * 3. Opens the file using the vfs_open utility.
+ * 4. Retrieves a free position in the system file table.
+ * 5. Assigns the open file to the current process's file table.
+ * 6. Manages the file offset based on the O_APPEND flag.
+ * 7. Manages the reference count for the file.
+ * 8. Sets the file mode based on the flags.
+ * 9. Creates a lock for the file.
+ * 10. Returns the file descriptor through the retval pointer.
+ *
+ * Return:
+ * 0 on success, or an appropriate error code on failure.
+ */
 int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
 {
 
@@ -115,9 +148,6 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
     }
 
     /* COPYING PATHNAME TO KERNEL SIDE */
-    // this is done for two reasons:
-    // 1) security reason
-    // 2) vfs_open may destroy the buffer
     char *kbuffer = (char *)kmalloc(PATH_MAX * sizeof(char));
     if (kbuffer == NULL)
     {
@@ -145,6 +175,7 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
     struct openfile *of = NULL;
     for (int i = 3; i < OPEN_MAX; i++)
     {
+        /* FINDING A FREE POSITION */
         if (curproc->fileTable[i] == NULL)
         {
             of = (struct openfile *)kmalloc(sizeof(struct openfile));
@@ -171,10 +202,10 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
     }
 
     /* ASSIGNING OPENFILE TO CURRENT PROCESS FILETABLE */
-    int fd = 3; // skipping STDIN, STDOUT and STDERR
+    int fd = 3; /* skipping STDIN, STDOUT and STDERR */
     if (of == NULL)
     {
-        return ENFILE; // system file table is full
+        return ENFILE; /* system file table is full */
     }
     else
     {
@@ -189,13 +220,13 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
 
         if (fd == OPEN_MAX - 1)
         {
-            return EMFILE; // process file table is full
+            return EMFILE; /* process file table is full */
         }
     }
 
     /* MANAGING OFFSET */
-    // if flag specified O_APPEND, the operation on the file should start at the end
-    // otherwise, it should start at the beginning
+    /* if flag specified O_APPEND, the operation on the file should start at the end
+    otherwise, it should start at the beginning */
     if (flags & O_APPEND)
     {
 
@@ -254,6 +285,18 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
     return 0;
 }
 
+/**
+ * sys_close - Close a file descriptor.
+ * @fd: The file descriptor to close.
+ *
+ * This function closes the file descriptor specified by @fd. It first checks
+ * if the file descriptor is valid and refers to an open file. If the file
+ * descriptor is invalid, it returns EBADF. If the file descriptor is valid,
+ * it reduces the reference count of the associated open file. If the reference
+ * count drops to zero, it closes the vnode associated with the open file.
+ *
+ * Return: 0 on success, EBADF if the file descriptor is invalid.
+ */
 int sys_close(int fd)
 {
     /* CHECKING FILE DESCRIPTOR */
@@ -289,18 +332,40 @@ int sys_close(int fd)
     lock_release(of->lock);
     return 0;
 }
+
+/**
+ * sys_lseek - Repositions the offset of the open file associated with the file descriptor.
+ *
+ * @fd: The file descriptor of the file to seek.
+ * @pos: The position to seek to.
+ * @whence: The directive for the seek operation. It can be one of the following:
+ *          SEEK_SET - Set the offset to pos.
+ *          SEEK_CUR - Set the offset to the current location plus pos.
+ *          SEEK_END - Set the offset to the size of the file plus pos.
+ * @retval_low32: Pointer to store the lower 32 bits of the resulting offset.
+ * @retval_upp32: Pointer to store the upper 32 bits of the resulting offset.
+ *
+ * Returns:
+ * 0 on success, or an error code on failure:
+ * - EBADF if the file descriptor is invalid or not open.
+ * - ESPIPE if the file is not seekable.
+ * - EINVAL if the whence argument is invalid or the resulting offset would be negative.
+ */
 int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *retval_upp32) {
 
     off_t retval = -1;
 
+    /* VALIDATE FILE DESCRIPTOR */
     KASSERT(curproc != NULL);
 
+    /* CHECKING FILE DESCRIPTOR */
     if (fd < 0 || fd >= OPEN_MAX) {
         return EBADF;   
     } else if (curproc->fileTable[fd] == NULL) {
         return EBADF;   
     }
 
+    /* CHECKING IF FILE IS SEEKABLE */
     if (!VOP_ISSEEKABLE(curproc->fileTable[fd]->vn)) {
         return ESPIPE;  
     }
@@ -310,7 +375,10 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
     struct stat info;
     lock_acquire(of->lock);
     retval = of->offset;
+
+    /* SEEK OPERATION */
     switch (whence) {
+        /* SEEK_SET: Set the offset to pos */
         case SEEK_SET:
             if (pos < 0) {
                 lock_release(of->lock);
@@ -319,6 +387,7 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
             retval = pos;
         break;
 
+        /* SEEK_CUR: Set the offset to the current location plus pos */
         case SEEK_CUR:
             if (pos < 0 && -pos > of->offset) {
                 lock_release(of->lock);
@@ -327,6 +396,7 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
             retval = of->offset + pos;
         break;
         
+        /* SEEK_END: Set the offset to the size of the file plus pos */
         case SEEK_END:
             err = VOP_STAT(of->vn, &info);
             if (err) {
@@ -348,12 +418,30 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
     of->offset = retval;
     lock_release(of->lock);
 
-    *retval_low32 = (int32_t) (retval >> 32);                 
+    /* SET RETURN VALUES */
+    *retval_low32 = (int32_t) (retval >> 32);
     *retval_upp32 = (int32_t) (retval & 0x00000000ffffffff);   
 
     return 0;
 }
 
+/**
+ * sys_read - Read data from a file descriptor.
+ * @fd: The file descriptor to read from.
+ * @buf: The buffer to store the read data.
+ * @buflen: The number of bytes to read.
+ * @retval: Pointer to store the number of bytes read.
+ *
+ * This function reads up to @buflen bytes from the file descriptor @fd into
+ * the buffer @buf. The actual number of bytes read is stored in @retval.
+ *
+ * Return:
+ *   0 on success,
+ *   EBADF if the file descriptor is invalid or not open for reading,
+ *   EFAULT if the buffer pointer is invalid or curproc is NULL,
+ *   ENOMEM if memory allocation for the kernel buffer fails,
+ *   or an error code from VOP_READ if the read operation fails.
+ */
 ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
 {
     struct openfile *of;
@@ -471,18 +559,33 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
 
     return 0; /* Success */
 }
-#endif
 
-#if OPT_SHELL
 /**
- * dup2 system call allows to duplicate an existing file descriptor (oldfd) onto another file descriptor (newfd).
- * If newfd is already open, it is closed before being reused.
- * 
- * @param oldfd: the file descriptor to duplicate
- * @param newfd: the target file descriptor to duplicate to
- * @param retval: the pointer to the variable which will store the new file descriptor identifier on success
- * 
- * @return: 0 on success or the specific error code on failure
+ * sys_dup2 - Duplicates a file descriptor.
+ *
+ * @param oldfd: The file descriptor to duplicate.
+ * @param newfd: The file descriptor to overwrite with the duplicate.
+ * @param retval: Pointer to store the new file descriptor.
+ *
+ * @return: 0 on success, or an error code on failure.
+ *
+ * This function duplicates the file descriptor oldfd to newfd. If newfd is already
+ * open, it will be closed before being overwritten. If oldfd is equal to newfd,
+ * the function does nothing and returns newfd. The function performs necessary
+ * checks to ensure that the file descriptors are valid and that oldfd is open.
+ */
+
+/**
+ * sys_fstat - Retrieves the status of an open file.
+ *
+ * @param fildes: The file descriptor of the file.
+ * @param buf: Pointer to a stat structure to store the file status.
+ *
+ * @return: 0 on success, or an error code on failure.
+ *
+ * This function is a stub and currently does nothing. It is intended to retrieve
+ * the status of the file associated with the file descriptor fildes and store it
+ * in the stat structure pointed to by buf.
  */
 int
 sys_dup2(int oldfd, int newfd, int32_t *retval)
@@ -526,25 +629,27 @@ sys_dup2(int oldfd, int newfd, int32_t *retval)
   *retval = newfd;
   return 0;
 }
-#endif
-
-#if OPT_SHELL
 int sys_fstat(int fildes, struct stat *buf) {
   (void)fildes;
   (void)buf;
 
   return 0;
 }
-#endif
 
-#if OPT_SHELL
 /**
- * chdir system call allows to change the current working directory of the calling process
- * to the directory specified by the provided path
- * 
- * @param path: the target path to the new directory
- * 
- * @return: 0 on success or the specific error code on failure
+ * sys_chdir - Change the current working directory of the calling process.
+ *
+ * @path: The path to the new directory.
+ *
+ * This function changes the current working directory of the calling process
+ * to the directory specified by the path argument. If the path is NULL, it
+ * returns EFAULT. It first copies the user-supplied path into a kernel buffer,
+ * then attempts to open the directory. If successful, it updates the current
+ * process's working directory to the new directory, closing the old one if
+ * necessary.
+ *
+ * Return:
+ * 0 on success, or an error code on failure.
  */
 int sys_chdir(const char *path)
 {
@@ -581,18 +686,21 @@ int sys_chdir(const char *path)
     curproc->p_cwd = new_dir;
     return 0;
 }
-#endif
 
-#if OPT_SHELL
 /**
- * getcwd system call allows to retrieve the current working directory of the calling process
- * and stores it in the provided buffer
- * 
- * @param buf: the buffer where the cwd will be copied
- * @param size: the size of the provided buffer
- * @param retlen: the pointer to the variable which will store the length of the directory path copied into the buffer
- * 
- * @return: 0 on success or the specific error code on failure
+ * sys_getcwd - Retrieves the current working directory.
+ *
+ * @param buf: A buffer to store the current working directory path.
+ * @param size: The size of the buffer.
+ * @param retlen: A pointer to store the length of the retrieved path.
+ *
+ * @return: 0 on success, or an error code on failure.
+ *
+ * This function copies the current working directory path into the provided
+ * buffer. The length of the path is stored in the location pointed to by retlen.
+ * If the size of the buffer is zero, the function returns EINVAL. If there is
+ * an error during the copyin or vfs_getcwd operations, the function returns
+ * the corresponding error code.
  */
 int
 sys_getcwd(char buf[], size_t size, int32_t *retlen)
@@ -624,9 +732,16 @@ sys_getcwd(char buf[], size_t size, int32_t *retlen)
   *retlen = size - cwd_uio.uio_resid;
   return 0;
 }
-#endif
 
-#if OPT_SHELL
+/**
+ * sys_remove - Remove a file from the filesystem.
+ * @pathname: The path of the file to be removed.
+ *
+ * This function is a placeholder for the system call to remove a file.
+ * Currently, it is not implemented and simply returns success.
+ *
+ * Return: Always returns 0 indicating success.
+ */
 int sys_remove(const char *pathname)
 {
 
