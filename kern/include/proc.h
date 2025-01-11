@@ -126,6 +126,10 @@ struct addrspace *proc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *proc_setas(struct addrspace *);
 
+#if OPT_SHELL
+
 int proc_init_std_fds(struct proc *proc);
+
+#endif /* OPT_SHELL */
 
 #endif /* _PROC_H_ */
