@@ -217,7 +217,9 @@ void syscall(struct trapframe *tf)
 	{
 		/* Success. */
 		tf->tf_v0 = retval;
+#if OPT_SHELL		
 		tf->tf_v1 = retval_upp32;
+#endif
 		tf->tf_a3 = 0; /* signal no error */
 	}
 
