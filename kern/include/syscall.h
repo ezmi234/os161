@@ -34,6 +34,8 @@
 #include <cdefs.h> /* for __DEAD */
 #include <stat.h>
 #include "opt-shell.h"
+#include <addrspace.h>
+
 struct trapframe; /* from <machine/trapframe.h> */
 
 /*
@@ -84,6 +86,12 @@ void sys__exit(int exitcode);
 int sys_fstat(int fildes, struct stat *buf);
 int sys_remove(const char *pathname);
 
+/* Helper functions */
+int copy_program_name(const char *user_prog, char **kernel_prog);
+int copy_arguments(char **user_args, char ***kernel_args, int *argc);
+int copy_args_to_stack(char **kernel_args, int argc, vaddr_t *stackptr);
+void cleanup_arguments(char **args, int count);
+void restore_old_address_space(struct addrspace *old_as, struct addrspace *new_as);
 #endif
 
 #endif /* _SYSCALL_H_ */

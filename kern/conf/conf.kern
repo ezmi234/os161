@@ -445,3 +445,4 @@ optfile net	test/nettest.c
 defoption shell
 optfile shell syscall/file_syscalls.c
 optfile shell syscall/proc_syscalls.c
+optfile shell syscall/utils.c
