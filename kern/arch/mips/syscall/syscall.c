@@ -237,6 +237,7 @@ void syscall(struct trapframe *tf)
 /*
  * enter_forked_process - Function called by the child process thread after fork.
  */
+#if OPT_SHELL
 void enter_forked_process(void *data, unsigned long unused)
 {
 	(void)unused; /* Unused variable */
@@ -256,3 +257,10 @@ void enter_forked_process(void *data, unsigned long unused)
 	/* Enter user mode */
 	mips_usermode(&tf);
 }
+#else
+void
+enter_forked_process(struct trapframe *tf)
+{
+	(void)tf;
+}
+#endif
