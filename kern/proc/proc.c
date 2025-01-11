@@ -339,40 +339,44 @@ proc_bootstrap(void)
 }
 
 #if OPT_SHELL
-static int console_init(const char *lock_name, struct proc *proc, int fd, int flag) {
-
-	/* ASSIGNMENT OF THE CONSOLE NAME */
-	char *con = kstrdup("con:");
-	if (con == NULL) {
+static int start_console(const char *lock_name, struct proc *proc, int fd, int flag) {
+	
+	/* ALLOCATE MEMORY FOR THE CONSOLE NAME */
+	char *console_name = kstrdup("con:");
+	if (console_name == NULL) {
 		return -1;
 	}
 
-	/* ALLOCATING SPACE IN THE FILETABLE */
-	proc->fileTable[fd] = (struct openfile *) kmalloc(sizeof(struct openfile));
-	if (proc->fileTable[fd] == NULL) {
-		kfree(con);
+	/* ALLOCATE MEMORY FOR THE OPENFILE STRUCTURE */
+	struct openfile *file = kmalloc(sizeof(struct openfile));
+	if (file == NULL) {
+		kfree(console_name);
 		return -1;
 	}
 
-	/* OPENING ASSOCIATED FILE */
-	int err = vfs_open(con, flag, 0644, &proc->fileTable[fd]->vn);
-	if (err) {
-		kfree(con);
-		kfree(proc->fileTable[fd]);
+	/* OPEN THE CONSOLE VNODE */
+	int result = vfs_open(console_name, flag, 0, &file->vn);
+	kfree(console_name);
+	if (result) {
+		kfree(file);
 		return -1;
 	}
-	kfree(con);
 
-	/* INITIALIZATION OF VALUES */
-	proc->fileTable[fd]->offset = 0;
-	proc->fileTable[fd]->lock = lock_create(lock_name);
-	if (proc->fileTable[fd]->lock == NULL) {
-		vfs_close(proc->fileTable[fd]->vn);
-		kfree(proc->fileTable[fd]);
+	/* INITIALIZE THE OPENFILE STRUCTURE */
+	file->offset = 0;
+	file->lock = lock_create(lock_name);
+	if (file->lock == NULL) {
+		vfs_close(file->vn);
+		kfree(file);
 		return -1;
 	}
-	proc->fileTable[fd]->count = 1;
-	proc->fileTable[fd]->mode = flag;
+
+	/* SET THE REFERENCE COUNT AND MODE */
+	file->count = 1;
+	file->mode = flag;
+
+	/* ASSIGN THE OPENFILE STRUCTURE TO THE PROCESS'S FILE TABLE */
+	proc->fileTable[fd] = file;
 
 	return 0;
 }
@@ -402,11 +406,11 @@ proc_create_runprogram(const char *name)
 
 	#if OPT_SHELL
 	/* CONSOLE INITIALIZATION FOR STDIN, STDOUT AND STDERR */
-	if (console_init("STDIN", newproc, 0, O_RDONLY) == -1) {
+	if (start_console("STDIN", newproc, 0, O_RDONLY) == -1) {
 		return NULL;
-	} else if (console_init("STDOUT", newproc, 1, O_WRONLY) == -1) {
+	} else if (start_console("STDOUT", newproc, 1, O_WRONLY) == -1) {
 		return NULL;
-	} else if (console_init("STDERR", newproc, 2, O_WRONLY) == -1) {
+	} else if (start_console("STDERR", newproc, 2, O_WRONLY) == -1) {
 		return NULL;
 	}
 	#endif
