@@ -3,7 +3,6 @@
 kern/compile/*
 *core
 CHANGES
-Makefile
 build/
 common/
 configure
@@ -22,4 +21,5 @@ build-kernel.sh
 build-toolchain.sh
 docker-compose.yml
 patches/
+build
 .
