@@ -12,7 +12,6 @@ design/
 man/
 mk/
 testscripts/
-userland/
 .gdbinit.main
 .gdbinit.root
 .travis.yml
