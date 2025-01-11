@@ -19,7 +19,7 @@
 
 #if OPT_SHELL
 
-#define MAX_OPEN_FILES 128      /* Define maximum open files per process */
+#define MAX_OPEN_FILES 128 /* Define maximum open files per process */
 
 /**
  * sys_write - Write data to a file descriptor.
@@ -42,42 +42,33 @@
  */
 ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
 {
-
     /* CHECKING FILE DESCRIPTOR */
     if (fd < 0 || fd >= OPEN_MAX)
-    { /* fd should be a valid number */
         return EBADF;
-    }
+
+    /* CHECKING CURPROC AND FILETABLE */
     if (curproc == NULL || curproc->fileTable == NULL)
-    {
-        return EFAULT; /* curproc should not be NULL */
-    }
+        return EFAULT;
+
+    /* CHECKING FILE DESCRIPTOR VALIDITY */
     if (curproc->fileTable[fd] == NULL)
-    { /* fd should refer to a valid entry in the fileTable */
         return EBADF;
-    }
 
     struct openfile *of = curproc->fileTable[fd];
 
-    /* Ensure the file is NOT read-only */
+    /* ENSURE THE FILE IS NOT READ-ONLY */
     if ((of->mode & O_ACCMODE) == O_RDONLY)
-    {
-        return EBADF; /* File is not open for writing */
-    }
+        return EBADF; /* FILE IS NOT OPEN FOR WRITING */
 
     if (buf == NULL)
-    {
-        return EFAULT; /* Invalid buffer pointer */
-    }
+        return EFAULT; /* INVALID BUFFER POINTER */
 
-    /* COPYING BUFFER TO KERNEL SIDE (copyin()) */
+    /* ALLOCATING KERNEL BUFFER */
     char *kbuffer = (char *)kmalloc(buflen);
     if (kbuffer == NULL)
-    {
         return ENOMEM;
-    }
 
-    /* Copy user buffer to kernel */
+    /* COPYING DATA FROM USER SPACE TO KERNEL SPACE */
     int err = copyin((const_userptr_t)buf, kbuffer, buflen);
     if (err)
     {
@@ -85,7 +76,7 @@ ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
         return EFAULT;
     }
 
-    /* PERFORMING WRITING (VOP_WRITE()) */
+    /* WRITING DATA TO FILE */
     struct iovec iov;
     struct uio kuio;
     struct vnode *vn = of->vn;
@@ -94,23 +85,37 @@ ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
 
     uio_kinit(&iov, &kuio, kbuffer, buflen, of->offset, UIO_WRITE);
     err = VOP_WRITE(vn, &kuio);
+
+    /* NO FREE SPACE REMAINING ON THE FILESYSTEM */
+    if (err == ENOSPC)
+    {
+        lock_release(of->lock);
+        kfree(kbuffer);
+        return ENOSPC;
+    }
+    /* HARDWARE I/O ERROR OCCURRED */
+    if (err == EIO)
+    {
+        lock_release(of->lock);
+        kfree(kbuffer);
+        return EIO; 
+    }
     if (err)
     {
         lock_release(of->lock);
         kfree(kbuffer);
-        return err; /* Error during file write */
+        return err; /* ERROR DURING FILE WRITE */
     }
 
-    /* REPOSITION OF THE OFFSET */
+    /* UPDATING OFFSET AND RETURN VALUE */
     off_t nbytes = kuio.uio_offset - of->offset;
     *retval = (int32_t)nbytes;
     of->offset = kuio.uio_offset;
 
-    /* FREEING KERNEL BUFFER */
+    /* RELEASE LOCK AND FREE KERNEL BUFFER */
     lock_release(of->lock);
     kfree(kbuffer);
 
-    /* TASK COMPLETED SUCCESSFULLY */
     return 0;
 }
 
@@ -138,28 +143,24 @@ ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval)
  */
 int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
 {
-
-    /* CHECKING INPUT ARGUMENTS */
+    /* CHECKING IF PATHNAME IS NULL */
     if (pathname == NULL)
-    {
         return EFAULT;
-    }
 
-    /* COPYING PATHNAME TO KERNEL SIDE */
+    /* COPYING PATHNAME FROM USER SPACE TO KERNEL SPACE */
     char *kbuffer = (char *)kmalloc(PATH_MAX * sizeof(char));
     if (kbuffer == NULL)
-    {
         return ENOMEM;
-    }
+
     size_t len;
-    int err = copyinstr((const_userptr_t)pathname, kbuffer, PATH_MAX, &len);    /* may return EFAULT */
+    int err = copyinstr((const_userptr_t)pathname, kbuffer, PATH_MAX, &len); /* MAY RETURN EFAULT */
     if (err)
     {
         kfree(kbuffer);
         return EFAULT;
     }
 
-    /* OPENING WITH VFS UTILITY */
+    /* OPENING FILE */
     struct vnode *v;
     err = vfs_open(kbuffer, flags, mode, &v);
     if (err)
@@ -169,11 +170,11 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
     }
     kfree(kbuffer);
 
-    /* RETRIEVING A FREE POSITION IN THE SYSTEM FILETABLE */
+    /* FINDING A FREE POSITION IN THE SYSTEM FILE TABLE */
     struct openfile *of = NULL;
     for (int i = 3; i < OPEN_MAX; i++)
     {
-        /* FINDING A FREE POSITION */
+        /* FINDING A FREE POSITION IN THE SYSTEM FILE TABLE */
         if (curproc->fileTable[i] == NULL)
         {
             of = (struct openfile *)kmalloc(sizeof(struct openfile));
@@ -199,12 +200,10 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
         }
     }
 
-    /* ASSIGNING OPENFILE TO CURRENT PROCESS FILETABLE */
-    int fd = 3; /* skipping STDIN, STDOUT and STDERR */
+    /* SYSTEM FILE TABLE IS FULL */
+    int fd = 3; /* 0, 1, 2 ARE RESERVED FOR STDIN, STDOUT, STDERR */
     if (of == NULL)
-    {
-        return ENFILE; /* system file table is full */
-    }
+        return ENFILE; /* SYSTEM FILE TABLE IS FULL */
     else
     {
         for (; fd < OPEN_MAX; fd++)
@@ -217,18 +216,13 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
         }
 
         if (fd == OPEN_MAX - 1)
-        {
-            return EMFILE; /* process file table is full */
-        }
+            return EMFILE; /* PROCESS FILE TABLE IS FULL */
     }
 
     /* MANAGING OFFSET */
-    /* if flag specified O_APPEND, the operation on the file should start at the end
-    otherwise, it should start at the beginning */
     if (flags & O_APPEND)
     {
-
-        /* RETRIEVING FILE SIZE */
+        /* READING FILE SIZE */
         struct stat filestat;
         err = VOP_STAT(curproc->fileTable[fd]->vn, &filestat);
         if (err)
@@ -240,13 +234,10 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
         curproc->fileTable[fd]->offset = filestat.st_size;
     }
     else
-    {
-
-        /* STARTING FROM THE BEGINNING */
+        /* SETTING OFFSET TO 0 */
         curproc->fileTable[fd]->offset = 0;
-    }
 
-    /* MANAGING REFERENCES */
+    /* MANAGING COUNT */
     curproc->fileTable[fd]->count = 1;
 
     /* MANAGING MODE */
@@ -268,7 +259,7 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
         return EINVAL;
     }
 
-    /* CREATING LOCK ON THIS FILE */
+    /* CREATING LOCK */
     curproc->fileTable[fd]->lock = lock_create("FILE_LOCK");
     if (curproc->fileTable[fd]->lock == NULL)
     {
@@ -278,7 +269,6 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
         return ENOMEM;
     }
 
-    /* TASK COMPLETED SUCCESSFULLY */
     *retval = fd;
     return 0;
 }
@@ -297,31 +287,25 @@ int sys_open(const char *pathname, int flags, mode_t mode, int *retval)
  */
 int sys_close(int fd)
 {
-    /* CHECKING FILE DESCRIPTOR */
+    /* CHECK IF THE FILE DESCRIPTOR IS VALID */
     if (fd < 0 || fd >= OPEN_MAX)
-    { /* fd should be a valid number                          */
         return EBADF;
-    }
-    else if (curproc->fileTable[fd] == NULL)
-    { /* fd should refer to a valid entry in the fileTable    */
-        return EBADF;
-    }
 
-    /* REDUCING REFERENCES */
+    /* CHECK IF THE FILE DESCRIPTOR IS IN USE */
+    if (curproc->fileTable[fd] == NULL)
+        return EBADF;
+
+    /* RETRIEVE THE OPEN FILE STRUCTURE */
     struct openfile *of = curproc->fileTable[fd];
     lock_acquire(of->lock);
+
+    /* REMOVE THE FILE DESCRIPTOR FROM THE PROCESS'S FILE TABLE */
     curproc->fileTable[fd] = NULL;
-    if (--of->count > 0)
-    {
 
-        /* THIS FILE IS STILL REFERENCED BY SOME PROCESS */
-        lock_release(of->lock);
-        return 0;
-    }
-    else
+    /* DECREMENT THE REFERENCE COUNT */
+    if (--of->count == 0)
     {
-
-        /* NO MORE PROCESS REFER TO THIS FILE, CLOSING ALSO VNODE */
+        /* IF NO MORE REFERENCES, CLOSE THE VNODE */
         struct vnode *vn = of->vn;
         of->vn = NULL;
         vfs_close(vn);
@@ -349,7 +333,8 @@ int sys_close(int fd)
  * - ESPIPE if the file is not seekable.
  * - EINVAL if the whence argument is invalid or the resulting offset would be negative.
  */
-int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *retval_upp32) {
+int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *retval_upp32)
+{
 
     off_t retval = -1;
 
@@ -357,16 +342,14 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
     KASSERT(curproc != NULL);
 
     /* CHECKING FILE DESCRIPTOR */
-    if (fd < 0 || fd >= OPEN_MAX) {
-        return EBADF;   
-    } else if (curproc->fileTable[fd] == NULL) {
-        return EBADF;   
-    }
+    if (fd < 0 || fd >= OPEN_MAX)
+        return EBADF;
+    else if (curproc->fileTable[fd] == NULL)
+        return EBADF;
 
     /* CHECKING IF FILE IS SEEKABLE */
-    if (!VOP_ISSEEKABLE(curproc->fileTable[fd]->vn)) {
-        return ESPIPE;  
-    }
+    if (!VOP_ISSEEKABLE(curproc->fileTable[fd]->vn))
+        return ESPIPE;
 
     struct openfile *of = curproc->fileTable[fd];
     int err;
@@ -375,50 +358,55 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
     retval = of->offset;
 
     /* SEEK OPERATION */
-    switch (whence) {
-        /* SEEK_SET: Set the offset to pos */
-        case SEEK_SET:
-            if (pos < 0) {
-                lock_release(of->lock);
-                return EINVAL;
-            }
-            retval = pos;
-        break;
-
-        /* SEEK_CUR: Set the offset to the current location plus pos */
-        case SEEK_CUR:
-            if (pos < 0 && -pos > of->offset) {
-                lock_release(of->lock);
-                return EINVAL;
-            }
-            retval = of->offset + pos;
-        break;
-        
-        /* SEEK_END: Set the offset to the size of the file plus pos */
-        case SEEK_END:
-            err = VOP_STAT(of->vn, &info);
-            if (err) {
-                lock_release(of->lock);
-                return err;
-            }
-            if (pos < 0 && -pos > info.st_size) {
-                lock_release(of->lock);
-                return EINVAL;
-            }
-            retval = info.st_size - pos;
-        break;
-
-        default:
+    switch (whence)
+    {
+    /* SEEK_SET: SET THE OFFSET TO POS */
+    case SEEK_SET:
+        if (pos < 0)
+        {
             lock_release(of->lock);
             return EINVAL;
+        }
+        retval = pos;
+        break;
+
+    /* SEEK_CUR: SET THE OFFSET TO THE CURRENT LOCATION PLUS POS */
+    case SEEK_CUR:
+        if (pos < 0 && -pos > of->offset)
+        {
+            lock_release(of->lock);
+            return EINVAL;
+        }
+        retval = of->offset + pos;
+        break;
+
+    /* SEEK_END: SET THE OFFSET TO THE SIZE OF THE FILE PLUS POS */
+    case SEEK_END:
+        err = VOP_STAT(of->vn, &info);
+        if (err)
+        {
+            lock_release(of->lock);
+            return err;
+        }
+        if (pos < 0 && -pos > info.st_size)
+        {
+            lock_release(of->lock);
+            return EINVAL;
+        }
+        retval = info.st_size - pos;
+        break;
+
+    default:
+        lock_release(of->lock);
+        return EINVAL;
     }
 
     of->offset = retval;
     lock_release(of->lock);
 
     /* SET RETURN VALUES */
-    *retval_low32 = (int32_t) (retval >> 32);
-    *retval_upp32 = (int32_t) (retval & 0x00000000ffffffff);   
+    *retval_low32 = (int32_t)(retval >> 32);
+    *retval_upp32 = (int32_t)(retval & 0x00000000ffffffff);
 
     return 0;
 }
@@ -440,123 +428,58 @@ int sys_lseek(int fd, off_t pos, int whence, int32_t *retval_low32, int32_t *ret
  *   ENOMEM if memory allocation for the kernel buffer fails,
  *   or an error code from VOP_READ if the read operation fails.
  */
-ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
-{
-    struct openfile *of;
-    struct iovec iov;
-    struct uio kuio;
-    struct vnode *vn;
-    int err;
+ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval) {
 
     /* VALIDATE FILE DESCRIPTOR */
-    if (fd < 0 || fd >= OPEN_MAX)
-    {
-        return EBADF; /* Invalid file descriptor */
-    }
-    if (curproc == NULL || curproc->fileTable == NULL)
-    {
-        return EFAULT; /* curproc should not be NULL */
+    if (fd < 0 || fd >= OPEN_MAX || curproc->fileTable[fd] == NULL || (curproc->fileTable[fd]->mode & O_ACCMODE) == O_WRONLY) {
+        return EBADF;
     }
 
-    of = curproc->fileTable[fd];
-
-    if (of == NULL)
-    {
-        return EBADF; /* File descriptor is not in use */
-    }
-
-    /* Ensure the file is NOT write-only */
-    if ((of->mode & O_ACCMODE) == O_WRONLY)
-    {
-        return EBADF; /* File is not open for reading */
-    }
-
-    if (buf == NULL)
-    {
-        return EFAULT; /* Invalid buffer pointer */
-    }
-
-    /* HANDLE READING FROM STDIN */
-    if (fd == STDIN_FILENO)
-    {
-        char *kbuffer = (char *)kmalloc(buflen);
-        if (kbuffer == NULL)
-        {
-            return ENOMEM; /* Memory allocation failed */
-        }
-
-        /* READ FROM STDIN */
-        size_t i = 0;
-        for (; i < buflen; i++)
-        {
-            kbuffer[i] = getch();
-            if (kbuffer[i] == '\n')
-            { /* Stop at newline */
-                i++;
-                break;
-            }
-        }
-
-        /* COPY BUFFER TO USER SPACE */
-        err = copyout(kbuffer, (userptr_t)buf, i);  /* Keep buf as const void * */
-        kfree(kbuffer);
-        if (err)
-        {
-            return EFAULT; /* Error copying data to user space */
-        }
-
-        *retval = i;
-        return 0; /* Success */
+    /* VALIDATE BUFFER */
+    if (buf == NULL) {
+        return EFAULT;
     }
 
     /* ALLOCATE KERNEL BUFFER */
-    char *kbuffer = (char *)kmalloc(buflen);
-    if (kbuffer == NULL)
-    {
-        return ENOMEM; /* Memory allocation failed */
+    char *kbuf = kmalloc(buflen);
+    if (kbuf == NULL) {
+        return ENOMEM;
     }
 
-    /* RETRIEVE FILE OBJECT */
-    vn = of->vn;
-    if (vn == NULL)
-    {
-        kfree(kbuffer);
-        return EBADF; /* Invalid vnode */
-    }
-
-    /* ACQUIRE FILE LOCK */
-    lock_acquire(of->lock);
-
-    /* INITIALIZE UIO FOR KERNEL BUFFER */
-    uio_kinit(&iov, &kuio, kbuffer, buflen, of->offset, UIO_READ);
+    /* PREPARE FOR READING */
+    struct openfile *of = curproc->fileTable[fd];
+    struct iovec iov;
+    struct uio kuio;
+    uio_kinit(&iov, &kuio, kbuf, buflen, of->offset, UIO_READ);
 
     /* PERFORM READ OPERATION */
-    err = VOP_READ(vn, &kuio);
-    if (err)
-    {
-        kfree(kbuffer);
+    lock_acquire(of->lock);
+    int result = VOP_READ(of->vn, &kuio);
+    if (result) {
         lock_release(of->lock);
-        return err; /* Error during file read */
+        kfree(kbuf);
+        return result;
     }
 
-    /* UPDATE FILE OFFSET */
+    /* UPDATE OFFSET */
     of->offset = kuio.uio_offset;
-
-    /* SET RETURN VALUE (BYTES READ) */
     *retval = buflen - kuio.uio_resid;
 
-    /* COPY BUFFER TO USER SPACE */
-    err = copyout(kbuffer, (userptr_t)buf, *retval);    /* Keep buf as const void * */
-    kfree(kbuffer);
-    lock_release(of->lock);
-
-    if (err)
-    {
-        return EFAULT; /* Copying to user space failed */
+    /* COPY DATA TO USER BUFFER */
+    result = copyout(kbuf, (userptr_t)buf, *retval);
+    if (result) {
+        lock_release(of->lock);
+        kfree(kbuf);
+        return EFAULT;
     }
 
-    return 0; /* Success */
+    /* CLEAN UP */
+    lock_release(of->lock);
+    kfree(kbuf);
+
+    return 0;
 }
+
 
 /**
  * sys_dup2 - Duplicates a file descriptor.
@@ -572,47 +495,47 @@ ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval)
  * the function does nothing and returns newfd. The function performs necessary
  * checks to ensure that the file descriptors are valid and that oldfd is open.
  */
-int
-sys_dup2(int oldfd, int newfd, int32_t *retval)
+int sys_dup2(int oldfd, int newfd, int32_t *retval)
 {
-  /* check validity of oldfd and newfd */
-  if (oldfd < 0 || oldfd >= OPEN_MAX || newfd < 0 || newfd >= OPEN_MAX) {
-    return EBADF;
-  }
+    /* check validity of oldfd and newfd */
+    if (oldfd < 0 || oldfd >= OPEN_MAX || newfd < 0 || newfd >= OPEN_MAX)
+        return EBADF;
 
-  /* check if oldfd is open */
-  if (curproc->fileTable[oldfd] == NULL) {
-      return EBADF;
-  }
+    /* check if oldfd is open */
+    if (curproc->fileTable[oldfd] == NULL)
+        return EBADF;
 
-  /* special case:if oldfd is the same as newfd, do nothing */
-  if (oldfd == newfd) {
+    /* special case:if oldfd is the same as newfd, do nothing */
+    if (oldfd == newfd)
+    {
+        *retval = newfd;
+        return 0;
+    }
+
+    /* special case: newfd is already open, close it before reusing it */
+    if (curproc->fileTable[newfd] != NULL)
+    {
+        struct openfile *of = curproc->fileTable[newfd];
+        lock_acquire(of->lock);
+        curproc->fileTable[newfd] = NULL;
+        if (--of->count == 0)
+        {
+            struct vnode *vn = of->vn;
+            of->vn = NULL;
+            vfs_close(vn);
+        }
+        lock_release(of->lock);
+    }
+
+    /* duplicate the fd: point newfd to the same file object as oldfd
+    increase the reference count for the file object */
+    lock_acquire(curproc->fileTable[oldfd]->lock);
+    curproc->fileTable[newfd] = curproc->fileTable[oldfd];
+    curproc->fileTable[newfd]->count++;
+    lock_release(curproc->fileTable[oldfd]->lock);
+
     *retval = newfd;
     return 0;
-  }
-
-  /* special case: newfd is already open, close it before reusing it */
-  if (curproc->fileTable[newfd] != NULL) {
-    struct openfile *of = curproc->fileTable[newfd];
-    lock_acquire(of->lock);
-    curproc->fileTable[newfd] = NULL;
-    if (--of->count == 0) {
-      struct vnode *vn = of->vn;
-      of->vn = NULL;
-      vfs_close(vn);
-    }
-    lock_release(of->lock);
-  }
-
-  /* duplicate the fd: point newfd to the same file object as oldfd
-  increase the reference count for the file object */
-  lock_acquire(curproc->fileTable[oldfd]->lock);
-  curproc->fileTable[newfd] = curproc->fileTable[oldfd];
-  curproc->fileTable[newfd]->count++;
-  lock_release(curproc->fileTable[oldfd]->lock);
-
-  *retval = newfd;
-  return 0;
 }
 
 /**
@@ -627,11 +550,12 @@ sys_dup2(int oldfd, int newfd, int32_t *retval)
  * the status of the file associated with the file descriptor fildes and store it
  * in the stat structure pointed to by buf.
  */
-int sys_fstat(int fildes, struct stat *buf) {
-  (void)fildes;
-  (void)buf;
+int sys_fstat(int fildes, struct stat *buf)
+{
+    (void)fildes;
+    (void)buf;
 
-  return 0;
+    return 0;
 }
 
 /**
@@ -653,9 +577,7 @@ int sys_chdir(const char *path)
 {
     /* check if the path is NULL */
     if (path == NULL)
-    {
         return EFAULT;
-    }
 
     char kbuf[PATH_MAX];
     struct vnode *new_dir;
@@ -663,22 +585,16 @@ int sys_chdir(const char *path)
     /* copy the user-space string path into the kernel buffer */
     int result = copyinstr((const_userptr_t)path, kbuf, sizeof(kbuf), NULL);
     if (result)
-    {
         return result;
-    }
 
     /* try to open the target directory specified by the path */
     result = vfs_open(kbuf, O_RDONLY, 0, &new_dir);
     if (result)
-    {
         return result;
-    }
 
     /* if the process already has a current working directory, close it */
     if (curproc->p_cwd != NULL)
-    {
         vfs_close(curproc->p_cwd);
-    }
 
     /* update the current working directory */
     curproc->p_cwd = new_dir;
@@ -700,35 +616,31 @@ int sys_chdir(const char *path)
  * an error during the copyin or vfs_getcwd operations, the function returns
  * the corresponding error code.
  */
-int
-sys_getcwd(char buf[], size_t size, int32_t *retlen)
+int sys_getcwd(char buf[], size_t size, int32_t *retlen)
 {
-  /* check if the size of the buffer is valid */
-  if (size == 0) {
-    return EINVAL;
-  }
+    /* check if the size of the buffer is valid */
+    if (size == 0)
+        return EINVAL;
 
-  /* copy the buffer to kernel space to validate the address */
-  int result = copyin((const_userptr_t)buf, buf, 1);
-  if (result) {
-      return result;
-  }
+    /* copy the buffer to kernel space to validate the address */
+    int result = copyin((const_userptr_t)buf, buf, 1);
+    if (result)
+        return result;
 
-  struct iovec iovec_buf;
-  struct uio cwd_uio;
+    struct iovec iovec_buf;
+    struct uio cwd_uio;
 
-  /* initialize the uio structure for reading the current working directory */
-  uio_kinit(&iovec_buf, &cwd_uio, (userptr_t)buf, size, 0, UIO_READ);
+    /* initialize the uio structure for reading the current working directory */
+    uio_kinit(&iovec_buf, &cwd_uio, (userptr_t)buf, size, 0, UIO_READ);
 
-  /* retrieve the current working directory */
-  result = vfs_getcwd(&cwd_uio);
-  if (result) {
-    return result;
-  }
+    /* retrieve the current working directory */
+    result = vfs_getcwd(&cwd_uio);
+    if (result)
+        return result;
 
-  /* retrieve the length of the directory path */
-  *retlen = size - cwd_uio.uio_resid;
-  return 0;
+    /* retrieve the length of the directory path */
+    *retlen = size - cwd_uio.uio_resid;
+    return 0;
 }
 
 /**
