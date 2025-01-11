@@ -1,10 +1,10 @@
-# Makefile for test_proc
+# Makefile for test_execv
 
 TOP=../../..
 .include "$(TOP)/mk/os161.config.mk"
 
-PROG=test_proc
-SRCS=test_proc.c
+PROG=test_execv
+SRCS=test_execv.c
 BINDIR=/testbin
 
 
