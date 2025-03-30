@@ -31,9 +31,11 @@
 #include <kern/errno.h>
 #include <kern/syscall.h>
 #include <lib.h>
+#include <stat.h>
 #include <mips/trapframe.h>
 #include <current.h>
 #include <syscall.h>
+#include <addrspace.h>
 
 /*
  * System call dispatcher.
@@ -73,12 +75,12 @@
  * stack, starting at sp+16 to skip over the slots for the
  * registerized values, with copyin().
  */
-void
-syscall(struct trapframe *tf)
+void syscall(struct trapframe *tf)
 {
 	int callno;
-	int32_t retval;
-	int err=0;
+	int32_t retval, retval_upp32;
+	int err = 0;
+	off_t pos;
 
 	KASSERT(curthread != NULL);
 	KASSERT(curthread->t_curspl == 0);
@@ -97,60 +99,128 @@ syscall(struct trapframe *tf)
 
 	retval = 0;
 
-	switch (callno) {
-	    case SYS_reboot:
-		err = sys_reboot(tf->tf_a0);
-		break;
+	switch (callno)
+	{
+		case SYS_reboot:
+			err = sys_reboot(tf->tf_a0);
+			break;
 
-	    case SYS___time:
-		err = sys___time((userptr_t)tf->tf_a0,
-				 (userptr_t)tf->tf_a1);
-		break;
+		case SYS___time:
+			err = sys___time((userptr_t)tf->tf_a0,
+							(userptr_t)tf->tf_a1);
+			break;
 
-	    /* Add stuff here */
+		/* Add stuff here */
 #if OPT_SHELL
-	    case SYS_write:
-	        retval = sys_write((int)tf->tf_a0,
-				(userptr_t)tf->tf_a1,
-				(size_t)tf->tf_a2);
-		/* error: function not implemented */
-                if (retval<0) err = ENOSYS; 
-		else err = 0;
-                break;
-	    case SYS_read:
-	        retval = sys_read((int)tf->tf_a0,
-				(userptr_t)tf->tf_a1,
-				(size_t)tf->tf_a2);
-		/* error: function not implemented */
-                if (retval<0) err = ENOSYS; 
-		else err = 0;
-                break;
-	    case SYS__exit:
-	        /* TODO: just avoid crash */
- 	        sys__exit((int)tf->tf_a0);
-                break;
+		/* File system syscalls */
+		case SYS_open:
+			err = sys_open((const char *)tf->tf_a0, (int)tf->tf_a1, (mode_t)tf->tf_a2, &retval);
+			break;
+			
+		case SYS_read:
+			err = sys_read(
+				(int)tf->tf_a0,
+				(void *)tf->tf_a1,
+				(size_t)tf->tf_a2,
+				&retval);
+			break;
+
+		case SYS_write:
+			err = sys_write((int)tf->tf_a0,
+							(userptr_t)tf->tf_a1,
+							(size_t)tf->tf_a2,
+							&retval);
+			break;
+
+		case SYS_lseek:
+			pos = tf->tf_a2;
+			pos <<= 32;
+			pos |= tf->tf_a3;
+
+			err = sys_lseek(
+				(int)tf->tf_a0,
+				pos,
+				*(int32_t *)(tf->tf_sp + 16),
+				(int32_t *) &retval,
+				(int32_t *) &retval_upp32
+			);
+			break;
+
+		case SYS_close:
+			err = sys_close((int)tf->tf_a0);
+			break;
+
+		case SYS_dup2:
+			err = sys_dup2((int)tf->tf_a0, (int)tf->tf_a1, &retval);
+			break;
+
+		/* Directory syscalls */
+		case SYS_chdir:
+			err = sys_chdir((const char *)tf->tf_a0);
+			break;
+
+		case SYS___getcwd:
+			err = sys_getcwd((char *)tf->tf_a0, (size_t)tf->tf_a1, &retval);
+			break;
+
+		/* Process syscalls */
+		case SYS_getpid:
+			retval = sys_getpid();
+			err = 0;
+			break;
+
+		case SYS_fork:
+			err = sys_fork(tf, &retval);
+			break;
+
+		case SYS_execv:
+			err = sys_execv((const char *)tf->tf_a0, (char **)tf->tf_a1);
+			break;
+		
+		case SYS_waitpid:
+			err = sys_waitpid((pid_t)tf->tf_a0, (int *)tf->tf_a1, (int)tf->tf_a2, &retval);
+			break;
+		
+		case SYS__exit:
+			sys__exit((int)tf->tf_a0);
+			err = 0;
+			break;
+
+	
+		/* Void syscalls added for testing purposes */
+		case SYS_fstat:
+			err = sys_fstat((int)tf->tf_a0, (struct stat *)tf->tf_a1);
+			break;
+
+		case SYS_remove:
+			err = sys_remove((const char *)tf->tf_a0);
+			break;
 #endif
 
-	    default:
-		kprintf("Unknown syscall %d\n", callno);
-		err = ENOSYS;
-		break;
+		default:
+			kprintf("Unknown syscall %d\n", callno);
+			err = ENOSYS;
+			break;
 	}
 
-
-	if (err) {
+	if (err)
+	{
 		/*
 		 * Return the error code. This gets converted at
 		 * userlevel to a return value of -1 and the error
 		 * code in errno.
 		 */
 		tf->tf_v0 = err;
-		tf->tf_a3 = 1;      /* signal an error */
+		tf->tf_a3 = 1; /* signal an error */
 	}
-	else {
+	else
+	{
 		/* Success. */
 		tf->tf_v0 = retval;
-		tf->tf_a3 = 0;      /* signal no error */
+#if OPT_SHELL		
+		tf->tf_v1 = retval_upp32;
+#endif
+		tf->tf_a3 = 0; /* signal no error */
 	}
 
 	/*
@@ -167,15 +237,32 @@ syscall(struct trapframe *tf)
 }
 
 /*
- * Enter user mode for a newly forked process.
- *
- * This function is provided as a reminder. You need to write
- * both it and the code that calls it.
- *
- * Thus, you can trash it and do things another way if you prefer.
+ * enter_forked_process - Function called by the child process thread after fork.
  */
+#if OPT_SHELL
+void enter_forked_process(void *data, unsigned long unused)
+{
+	(void)unused; /* Unused variable */
+
+	struct trapframe tf = *(struct trapframe *)data;
+
+	kfree(data); /* Free the data */
+
+	/* Activate the new address space */
+	as_activate();
+
+	/* Modify the trapframe for the child */
+	tf.tf_v0 = 0;	/* Return value for the child */
+	tf.tf_a3 = 0;	/* Signal no error */
+	tf.tf_epc += 4; /* Advance the program counter */
+
+	/* Enter user mode */
+	mips_usermode(&tf);
+}
+#else
 void
 enter_forked_process(struct trapframe *tf)
 {
 	(void)tf;
 }
+#endif

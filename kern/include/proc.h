@@ -37,10 +37,31 @@
  */
 
 #include <spinlock.h>
+#include <limits.h>
+#include "opt-shell.h"
 
 struct addrspace;
 struct thread;
 struct vnode;
+
+#if OPT_SHELL
+
+/* Maximum number of processes in the system */
+#define PROC_MAX 100
+
+/* Process table structure */
+struct process_table {
+    struct proc *proc[PROC_MAX + 1]; 	/* Process table */
+    pid_t last_pid;                  	/* Last PID assigned */
+    struct spinlock lock;            	/* Lock for the process table */
+    bool active;                     	/* Process table active */
+};
+
+void process_table_init(void);
+int proc_add(pid_t pid, struct proc *proc);
+void proc_remove(pid_t pid);
+struct proc *proc_search(pid_t pid);
+#endif /* OPT_SHELL */
 
 /*
  * Process structure.
@@ -70,7 +91,15 @@ struct proc {
 	/* VFS */
 	struct vnode *p_cwd;		/* current working directory */
 
-	/* add more material here as needed */
+#if OPT_SHELL
+	struct openfile *fileTable[OPEN_MAX];	/* File table */
+	pid_t p_pid;							/* Process ID */
+	int p_exitcode;							/* Exit code */
+	bool p_exited;							/* Process exited */
+	struct cv *p_cv;						/* Condition variable */
+	pid_t parent_pid;						/* Parent process ID */
+	struct lock *p_locklock;				/* Lock for this structure */
+#endif
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
@@ -97,5 +126,10 @@ struct addrspace *proc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *proc_setas(struct addrspace *);
 
+#if OPT_SHELL
+
+int proc_init_std_fds(struct proc *proc);
+
+#endif /* OPT_SHELL */
 
 #endif /* _PROC_H_ */

@@ -32,7 +32,10 @@
 
 
 #include <cdefs.h> /* for __DEAD */
+#include <stat.h>
 #include "opt-shell.h"
+#include <addrspace.h>
+
 struct trapframe; /* from <machine/trapframe.h> */
 
 /*
@@ -46,7 +49,7 @@ void syscall(struct trapframe *tf);
  */
 
 /* Helper for fork(). You write this. */
-void enter_forked_process(struct trapframe *tf);
+void enter_forked_process(void *data, unsigned long unused);
 
 /* Enter user mode. Does not return. */
 __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
@@ -59,9 +62,36 @@ __DEAD void enter_new_process(int argc, userptr_t argv, userptr_t env,
 
 int sys_reboot(int code);
 int sys___time(userptr_t user_seconds, userptr_t user_nanoseconds);
-#if OPT_SHELL 
-int sys_write(int fd, userptr_t buf_ptr, size_t size);
-int sys_read(int fd, userptr_t buf_ptr, size_t size);
-void sys__exit(int status);
+
+#if OPT_SHELL
+
+/* System calls for file system */
+int sys_open(const char *pathname, int flags, mode_t mode, int *retval);
+ssize_t sys_read(int fd, const void *buf, size_t buflen, int32_t *retval);
+ssize_t sys_write(int fd, const void *buf, size_t buflen, int32_t *retval);
+int sys_lseek(int fd, off_t offset, int whence, int32_t *retval_low32, int32_t *retval_upp32);
+int sys_close(int fd);
+int sys_dup2(int oldf, int newfd, int32_t *retval);
+
+/* System calls for directory system */
+int sys_chdir(const char *path);
+int sys_getcwd(char buf[], size_t size, int32_t *retval);
+
+/* System calls for process system */
+pid_t sys_getpid(void);
+int sys_fork(struct trapframe *tf, pid_t *retval);
+int sys_execv(const char *program, char **args);
+int sys_waitpid(pid_t pid, int *status, int options, int *retval);
+void sys__exit(int exitcode);
+int sys_fstat(int fildes, struct stat *buf);
+int sys_remove(const char *pathname);
+
+/* Helper functions */
+int copy_program_name(const char *user_prog, char **kernel_prog);
+int copy_arguments(char **user_args, char ***kernel_args, int *argc);
+int copy_args_to_stack(char **kernel_args, int argc, vaddr_t *stackptr);
+void cleanup_arguments(char **args, int count);
+void restore_old_address_space(struct addrspace *old_as, struct addrspace *new_as);
 #endif
+
 #endif /* _SYSCALL_H_ */

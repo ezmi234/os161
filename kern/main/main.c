@@ -99,9 +99,15 @@ boot(void)
 	kprintf("OS/161 base system version %s\n", BASE_VERSION);
 	kprintf("%s", harvard_copyright);
 	kprintf("\n");
-
-	kprintf("Put-your-group-name-here's system version %s (%s #%d)\n",
-		GROUP_VERSION, buildconfig, buildversion);
+	#if OPT_SHELL
+		kprintf("Project c2 - SHELL\n");
+		kprintf("Ezmiron Deniku - s333461@studenti.polito.it\n");
+		kprintf("Gabriele Mancari Pasi - s323387@studenti.polito.it\n");
+		kprintf("Federico Spinoso - s324617@studenti.polito.it\n");
+	#else
+		kprintf("Put-your-group-name-here's system version %s (%s #%d)\n",
+			GROUP_VERSION, buildconfig, buildversion);
+	#endif
 	kprintf("\n");
 
 	/* Early initialization. */

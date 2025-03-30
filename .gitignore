@@ -3,7 +3,6 @@
 kern/compile/*
 *core
 CHANGES
-Makefile
 build/
 common/
 configure
@@ -12,7 +11,6 @@ design/
 man/
 mk/
 testscripts/
-userland/
 .gdbinit.main
 .gdbinit.root
 .travis.yml
@@ -23,4 +21,5 @@ build-kernel.sh
 build-toolchain.sh
 docker-compose.yml
 patches/
+build
 .
